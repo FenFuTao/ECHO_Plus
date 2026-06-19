@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/protocol_serial" android:title="@string/protocol_serial" />
+    <item android:id="@+id/protocol_bluetooth" android:title="@string/protocol_bluetooth" />
+    <item android:id="@+id/protocol_tcp" android:title="@string/protocol_tcp" />
+    <item android:id="@+id/protocol_udp" android:title="@string/protocol_udp" />
+</menu>
