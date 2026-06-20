@@ -18,6 +18,7 @@ import android.widget.AdapterView
 import android.widget.TextView
 import android.content.Intent
 import android.net.Uri
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.example.echo.util.AppLogger
 import com.example.echo.util.ConfigManager
@@ -646,11 +647,28 @@ class MainActivity : AppCompatActivity() {
 
         spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                if (position == 0) {
-                    setBarAndSave(BAR_NARROW, "窄（适合手机）")
-                } else {
-                    setBarAndSave(BAR_WIDE, "宽（适合平板）")
-                }
+                val newBarDp = if (position == 0) BAR_NARROW else BAR_WIDE
+                val label = if (position == 0) "窄（适合手机）" else "宽（适合平板）"
+
+                // 如果已经是当前值，跳过
+                if (newBarDp == panelConfig.menuBarWidthDp) return
+
+                // 保存新配置到文件（不立即应用布局）
+                panelConfig.menuBarWidthDp = newBarDp
+                ConfigManager.saveConfig(panelConfig)
+
+                // 询问是否立即重启以应用新的DPI配置
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("DPI配置已更改")
+                    .setMessage("菜单栏宽度已设置为「$label」。\n是否立即重启应用以应用新的DPI适配？\n\n若不重启，配置将保存到文件，在下次手动重启后生效。")
+                    .setPositiveButton("立即重启") { _, _ ->
+                        restartApp()
+                    }
+                    .setNegativeButton("稍后重启") { _, _ ->
+                        Toast.makeText(this@MainActivity, "配置已保存，重启后生效", Toast.LENGTH_SHORT).show()
+                    }
+                    .setCancelable(false)
+                    .show()
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) {}
@@ -662,9 +680,6 @@ class MainActivity : AppCompatActivity() {
         (paramsContainer.layoutParams as LinearLayout.LayoutParams).weight = panelConfig.rightPanelWeight
         (plotContainer.layoutParams as LinearLayout.LayoutParams).weight = panelConfig.plotWeight
         (outputContainer.layoutParams as LinearLayout.LayoutParams).weight = panelConfig.outputWeight
-        val scale = panelConfig.uiScale
-        rootContainer.scaleX = scale
-        rootContainer.scaleY = scale
     }
 
     private fun setupDividers() {
@@ -696,6 +711,14 @@ class MainActivity : AppCompatActivity() {
             }
             MotionEvent.ACTION_UP -> { if (isDraggingH) { isDraggingH = false; ConfigManager.saveConfig(panelConfig) } }
         }
+    }
+
+    private fun restartApp() {
+        val intent = Intent(this, MainActivity::class.java)
+        intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK
+        finish()
+        startActivity(intent)
+        Runtime.getRuntime().exit(0)
     }
 
     private val commandListener = NavigationView.OnNavigationItemSelectedListener { item -> AppLogger.i("MainActivity", "命令: ${item.title}"); closeMenu(); true }
