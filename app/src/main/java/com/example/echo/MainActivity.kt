@@ -12,6 +12,12 @@ import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.Toast
+import android.widget.Spinner
+import android.widget.ArrayAdapter
+import android.widget.AdapterView
+import android.widget.TextView
+import android.content.Intent
+import android.net.Uri
 import androidx.appcompat.app.AppCompatActivity
 import com.example.echo.util.AppLogger
 import com.example.echo.util.ConfigManager
@@ -30,6 +36,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var plotContainer: FrameLayout
     private lateinit var outputContainer: FrameLayout
     private lateinit var paramsContainer: FrameLayout
+    private lateinit var menuBarHighlight: View
+    private lateinit var menuBarDecoration: View
 
     private var isMenuOpen = false
     private var activeIsA = true
@@ -39,6 +47,9 @@ class MainActivity : AppCompatActivity() {
     private var panelConfig = PanelConfig()
 
     private var isDraggingV = false
+    private var protocolView: View? = null
+    private var isShowingProtocol = false
+
     private var isDraggingH = false
     private var startX = 0f
     private var startY = 0f
@@ -46,8 +57,6 @@ class MainActivity : AppCompatActivity() {
     private var startRightWeight = 1f
     private var startPlotWeight = 1f
     private var startOutputWeight = 1f
-
-    private var currentIconPx = 0
 
     companion object {
         private const val MENU_WIDTH_DP = 280f
@@ -68,8 +77,11 @@ class MainActivity : AppCompatActivity() {
         plotContainer = findViewById(R.id.plotContainer)
         outputContainer = findViewById(R.id.outputContainer)
         paramsContainer = findViewById(R.id.paramsContainer)
+        menuBarHighlight = findViewById(R.id.menuBarHighlight)
+        menuBarDecoration = findViewById(R.id.menuBarDecoration)
 
         panelConfig = ConfigManager.loadConfig()
+        applyColors()
         applyPanelConfig()
         applyMenuBarLayout()
 
@@ -78,6 +90,27 @@ class MainActivity : AppCompatActivity() {
         navB.translationX = -getMenuPx(); navB.visibility = View.GONE
         scrimOverlay.setOnClickListener { closeMenu() }
         workArea.setOnClickListener { if (isMenuOpen) closeMenu() }
+    }
+
+    // ====================== 主题配色 ======================
+
+    private fun applyColors() {
+        val primaryColor = android.graphics.Color.parseColor(panelConfig.primaryColorHex)
+        val menuBarBg = android.graphics.Color.parseColor(panelConfig.menuBarBgHex)
+
+        // 应用主色调
+        val window = window
+        window.statusBarColor = primaryColor
+        window.navigationBarColor = primaryColor
+
+        // 设置菜单栏背景
+        menuBar.setBackgroundColor(menuBarBg)
+
+        // 设置菜单页顶部标签背景为主色调
+        navA.getHeaderView(0)?.setBackgroundColor(primaryColor)
+        navB.getHeaderView(0)?.setBackgroundColor(primaryColor)
+
+        AppLogger.i("MainActivity", "配色: primary=${panelConfig.primaryColorHex}, menuBar=${panelConfig.menuBarBgHex}")
     }
 
     private fun dpToPx(dp: Int): Int =
@@ -91,9 +124,9 @@ class MainActivity : AppCompatActivity() {
         val ratio = barDp.toFloat() / 48f
         val iconSz = dpToPx((ICON_DP * ratio).toInt())
         val pad = dpToPx((6 * ratio).toInt())
-        val mt = dpToPx((12 * ratio).toInt())
         val ms = dpToPx((8 * ratio).toInt())
-        currentIconPx = iconSz
+        val decorMt = dpToPx((6 * ratio).toInt())
+        val btnTopMt = dpToPx((6 * ratio).toInt())
 
         menuBar.layoutParams.width = barPx; menuBar.requestLayout()
         (workArea.layoutParams as ViewGroup.MarginLayoutParams).marginStart = barPx
@@ -101,14 +134,27 @@ class MainActivity : AppCompatActivity() {
         (navA.layoutParams as ViewGroup.MarginLayoutParams).marginStart = barPx
         (navB.layoutParams as ViewGroup.MarginLayoutParams).marginStart = barPx
 
+        // 装饰圆角方形
+        menuBarDecoration.apply {
+            val lp = layoutParams
+            lp.width = iconSz; lp.height = iconSz
+            (lp as ViewGroup.MarginLayoutParams).topMargin = decorMt
+            layoutParams = lp
+        }
+
+        val connectSz = dpToPx((ICON_DP * 1.15 * ratio).toInt()) // 连接按钮比普通图标大15%
+
         val ids = intArrayOf(R.id.menuBarConnect, R.id.menuBarProtocol, R.id.menuBarCommand, R.id.menuBarControl, R.id.menuBarSetting)
         for (id in ids) {
             val btn = findViewById<ImageButton>(id)
             val lp = btn.layoutParams as ViewGroup.MarginLayoutParams
-            lp.width = iconSz; lp.height = iconSz
-            lp.topMargin = if (id == R.id.menuBarConnect) mt else ms
+            val sz = if (id == R.id.menuBarConnect) connectSz else iconSz
+            lp.width = sz; lp.height = sz
+            lp.topMargin = if (id == R.id.menuBarConnect) btnTopMt else ms
             btn.layoutParams = lp; btn.setPadding(pad, pad, pad, pad)
         }
+        // 更新高亮指示器尺寸 - 保持 64:48 (高:宽) 比例匹配 bg_menu_highlight 矢量图
+        menuBarHighlight.layoutParams.height = (barPx * 64f / 48f).toInt()
         AppLogger.i("MainActivity", "菜单栏: ${barDp}dp, 图标: ${(ICON_DP * ratio).toInt()}dp")
     }
 
@@ -126,30 +172,21 @@ class MainActivity : AppCompatActivity() {
 
     private fun clearMenuBarHighlight() {
         for (id in menuBarButtonIds) {
-            findViewById<ImageButton>(id)?.let {
-                it.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                val lp = it.layoutParams; lp.width = currentIconPx; lp.height = currentIconPx
-                it.layoutParams = lp
-            }
+            findViewById<ImageButton>(id)?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
         }
-        findViewById<ImageButton>(R.id.menuBarSetting)?.setImageResource(R.drawable.ic_settings)
+        menuBarHighlight.visibility = View.GONE
     }
 
     private fun highlightMenuBarButton(btnId: Int) {
-        clearMenuBarHighlight()
-        findViewById<ImageButton>(btnId)?.let {
-            it.setBackgroundResource(R.drawable.bg_menu_highlight)
-            val lp = it.layoutParams
-            val barPx = dpToPx(currentBarDp())
-            lp.width = barPx; lp.height = barPx
-            it.layoutParams = lp
-        }
-        if (btnId == R.id.menuBarSetting) {
-            findViewById<ImageButton>(R.id.menuBarSetting)?.setImageResource(R.drawable.ic_settings_dark)
+        clearMenuBarHighlight() // 先隐藏高亮框
+        val btn = findViewById<ImageButton>(btnId)
+        // 在布局完成后定位，再显现，避免出现位置跳跃
+        // 使用 layoutParams.height 而非实测 height，因为 GONE 状态下实测 height=0
+        menuBarHighlight.post {
+            menuBarHighlight.translationY = btn.y + (btn.height - menuBarHighlight.layoutParams.height) / 2f
+            menuBarHighlight.visibility = View.VISIBLE
         }
     }
-
-    private fun currentBarDp(): Int = panelConfig.menuBarWidthDp.coerceIn(BAR_NARROW, BAR_WIDE)
 
     // ====================== 菜单控制 ======================
 
@@ -186,6 +223,10 @@ class MainActivity : AppCompatActivity() {
         titleRes: Int, menuRes: Int, btnId: Int,
         listener: NavigationView.OnNavigationItemSelectedListener
     ) {
+        // 如果当前显示协议页面，先恢复 paramsContainer
+        if (isShowingProtocol) {
+            restoreParamsContainerDefault()
+        }
         if (isMenuOpen && currentMenuRes == menuRes) return
         currentMenuRes = menuRes; selectedMenuBtnId = btnId
         val title = getString(titleRes); val menuPx = getMenuPx()
@@ -208,27 +249,185 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupButtons() {
-        findViewById<ImageButton>(R.id.menuBarSetting).setOnClickListener {
-            switchMenuSimultaneously(R.string.nav_header_settings, R.menu.nav_drawer, R.id.menuBarSetting, settingsListener)
+        setupMenuButton(R.id.menuBarSetting, R.string.nav_header_settings, R.menu.nav_drawer, settingsListener)
+        setupProtocolButton()
+        setupMenuButton(R.id.menuBarCommand, R.string.nav_header_command, R.menu.menu_command, commandListener)
+        setupMenuButton(R.id.menuBarControl, R.string.nav_header_control, R.menu.menu_control, controlListener)
+        setupConnectButton()
+    }
+
+    /** 菜单按钮：按下放大，松开恢复并执行菜单切换 */
+    private fun setupMenuButton(btnId: Int, titleRes: Int, menuRes: Int, listener: NavigationView.OnNavigationItemSelectedListener) {
+        findViewById<ImageButton>(btnId).setOnTouchListener { v, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    v.animate().scaleX(1.3f).scaleY(1.3f).setDuration(100).start()
+                    switchMenuSimultaneously(titleRes, menuRes, btnId, listener)
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(100).start()
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(100).start()
+                    true
+                }
+                else -> true
+            }
         }
-        findViewById<ImageButton>(R.id.menuBarProtocol).setOnClickListener {
-            switchMenuSimultaneously(R.string.nav_header_protocol, R.menu.menu_protocol, R.id.menuBarProtocol, protocolListener)
+    }
+
+    /** 连接按钮：按下时立即切换状态并放大，松开恢复 */
+    private fun setupConnectButton() {
+        findViewById<ImageButton>(R.id.menuBarConnect).setOnTouchListener { v, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    v.animate().scaleX(1.3f).scaleY(1.3f).setDuration(100).start()
+                    isConnected = !isConnected
+                    (v as ImageButton).setImageResource(
+                        if (isConnected) R.drawable.ic_connect_on else R.drawable.ic_connect_off
+                    )
+                    val s = if (isConnected) "已连接" else "已断开"
+                    AppLogger.i("MainActivity", "连接状态: $s")
+                    val t = Toast.makeText(this, s, Toast.LENGTH_SHORT); t.show()
+                    Handler(Looper.getMainLooper()).postDelayed({ t.cancel() }, 500)
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(100).start()
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(100).start()
+                    true
+                }
+                else -> true
+            }
         }
-        findViewById<ImageButton>(R.id.menuBarCommand).setOnClickListener {
-            switchMenuSimultaneously(R.string.nav_header_command, R.menu.menu_command, R.id.menuBarCommand, commandListener)
+    }
+
+    // ====================== 协议与连接页面 ======================
+
+    /** 协议按钮：按下放大，松开恢复，切换协议页面显示 */
+    private fun setupProtocolButton() {
+        findViewById<ImageButton>(R.id.menuBarProtocol).setOnTouchListener { v, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    v.animate().scaleX(1.3f).scaleY(1.3f).setDuration(100).start()
+                    toggleProtocolPage()
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(100).start()
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(100).start()
+                    true
+                }
+                else -> true
+            }
         }
-        findViewById<ImageButton>(R.id.menuBarControl).setOnClickListener {
-            switchMenuSimultaneously(R.string.nav_header_control, R.menu.menu_control, R.id.menuBarControl, controlListener)
+    }
+
+    /** 切换协议页面的显示/隐藏 */
+    private fun toggleProtocolPage() {
+        if (isShowingProtocol) {
+            // 已显示协议页面，再次点击则关闭
+            restoreParamsContainerDefault()
+            clearMenuBarHighlight()
+            isShowingProtocol = false
+        } else {
+            showProtocolPage()
         }
-        findViewById<ImageButton>(R.id.menuBarConnect).setOnClickListener {
-            isConnected = !isConnected
-            findViewById<ImageButton>(R.id.menuBarConnect).setImageResource(
-                if (isConnected) R.drawable.ic_connect_on else R.drawable.ic_connect_off
-            )
-            val s = if (isConnected) "已连接" else "已断开"
-            AppLogger.i("MainActivity", "连接状态: $s")
-            val t = Toast.makeText(this, s, Toast.LENGTH_SHORT); t.show()
-            Handler(Looper.getMainLooper()).postDelayed({ t.cancel() }, 500)
+    }
+
+    /** 显示协议与连接页面 */
+    private fun showProtocolPage() {
+        // 关闭已打开的侧边菜单
+        if (isMenuOpen) closeMenu()
+
+        highlightMenuBarButton(R.id.menuBarProtocol)
+
+        // 首次使用时 inflate 布局
+        if (protocolView == null) {
+            protocolView = layoutInflater.inflate(R.layout.page_protocol, paramsContainer, false)
+            setupProtocolSpinner()
+            setupProtocolDocButton()
+        }
+
+        // 替换 paramsContainer 内容
+        paramsContainer.removeAllViews()
+        paramsContainer.addView(protocolView)
+        paramsContainer.setPadding(0, 0, 0, 0)
+        isShowingProtocol = true
+    }
+
+    /** 恢复 paramsContainer 为默认的"参数列表"占位内容 */
+    private fun restoreParamsContainerDefault() {
+        paramsContainer.removeAllViews()
+        paramsContainer.setPadding(4, 4, 4, 4)
+        val defaultText = TextView(this)
+        defaultText.layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = android.view.Gravity.TOP or android.view.Gravity.START
+        }
+        defaultText.text = getString(R.string.param_title)
+        defaultText.setTextColor(android.graphics.Color.parseColor("#9E9E9E"))
+        defaultText.textSize = 12f
+        paramsContainer.addView(defaultText)
+        isShowingProtocol = false
+    }
+
+    /** 配置协议接口下拉选择框 */
+    private fun setupProtocolSpinner() {
+        val spinner = protocolView?.findViewById<Spinner>(R.id.protocolSpinner) ?: return
+        val options = listOf(
+            getString(R.string.protocol_option_serial),
+            getString(R.string.protocol_option_udp),
+            getString(R.string.protocol_option_tcp_client),
+            getString(R.string.protocol_option_tcp_server),
+            getString(R.string.protocol_option_demo)
+        )
+        val adapter = object : ArrayAdapter<String>(this, R.layout.spinner_item_protocol, options) {
+            override fun getDropDownView(position: Int, convertView: android.view.View?, parent: android.view.ViewGroup): android.view.View {
+                val view = super.getDropDownView(position, convertView, parent) as TextView
+                view.setBackgroundResource(R.drawable.bg_spinner_dropdown_item)
+                view.setPadding(20, 14, 20, 14)
+                return view
+            }
+        }
+        adapter.setDropDownViewResource(R.layout.spinner_item_protocol)
+        spinner.adapter = adapter
+
+        spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                val selected = options[position]
+                val infoText = protocolView?.findViewById<TextView>(R.id.protocolSelectionInfo)
+                infoText?.text = "已选择: $selected"
+                AppLogger.i("MainActivity", "协议接口选择: $selected")
+
+                // 更新状态提示
+                val badge = protocolView?.findViewById<TextView>(R.id.protocolStatusBadge)
+                badge?.text = if (position == 0) getString(R.string.protocol_status_disconnected) else "待连接"
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+    }
+
+    /** 配置"?"文档按钮 */
+    private fun setupProtocolDocButton() {
+        val docBtn = protocolView?.findViewById<ImageButton>(R.id.protocolDocBtn) ?: return
+        docBtn.setOnClickListener {
+            AppLogger.i("MainActivity", "打开协议文档")
+            Toast.makeText(this, "打开协议文档", Toast.LENGTH_SHORT).show()
+            // 可以在这里打开文档 URL，例如：
+            // val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://docs.example.com/protocol"))
+            // startActivity(intent)
         }
     }
 
@@ -281,7 +480,6 @@ class MainActivity : AppCompatActivity() {
         }
         closeMenu(); true
     }
-    private val protocolListener = NavigationView.OnNavigationItemSelectedListener { item -> AppLogger.i("MainActivity", "协议: ${item.title}"); closeMenu(); true }
     private val commandListener = NavigationView.OnNavigationItemSelectedListener { item -> AppLogger.i("MainActivity", "命令: ${item.title}"); closeMenu(); true }
     private val controlListener = NavigationView.OnNavigationItemSelectedListener { item -> AppLogger.i("MainActivity", "控件: ${item.title}"); closeMenu(); true }
     private val connectionListener = NavigationView.OnNavigationItemSelectedListener { item ->

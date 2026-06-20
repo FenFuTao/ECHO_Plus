@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.ECHO" parent="Theme.MaterialComponents.Light.NoActionBar">
-        <item name="colorPrimary">#FF6200EE</item>
+        <item name="colorPrimary">#FF2983BB</item>
         <item name="colorOnPrimary">@android:color/white</item>
         <item name="colorSecondary">#FF03DAC5</item>
         <item name="colorOnSecondary">@android:color/black</item>

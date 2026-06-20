@@ -10,7 +10,9 @@ data class PanelConfig(
     var leftPanelWeight: Float = 2f,
     var rightPanelWeight: Float = 1f,
     var uiScale: Float = 1.0f,
-    var menuBarWidthDp: Int = 48
+    var menuBarWidthDp: Int = 48,
+    var primaryColorHex: String = "#FF2983BB",
+    var menuBarBgHex: String = "#FFBACCD9"
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("plotWeight", plotWeight.toDouble())
@@ -19,6 +21,8 @@ data class PanelConfig(
         put("rightPanelWeight", rightPanelWeight.toDouble())
         put("uiScale", uiScale.toDouble())
         put("menuBarWidthDp", menuBarWidthDp)
+        put("primaryColorHex", primaryColorHex)
+        put("menuBarBgHex", menuBarBgHex)
     }
 
     companion object {
@@ -30,6 +34,8 @@ data class PanelConfig(
                 rightPanelWeight = it.optDouble("rightPanelWeight", 1.0).toFloat()
                 uiScale = it.optDouble("uiScale", 1.0).toFloat()
                 menuBarWidthDp = it.optInt("menuBarWidthDp", 48)
+                primaryColorHex = it.optString("primaryColorHex", "#FF2983BB")
+                menuBarBgHex = it.optString("menuBarBgHex", "#FFBACCD9")
             }
         }
     }

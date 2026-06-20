@@ -35,4 +35,18 @@
     <string name="menu_btn2">测试按钮二</string>
     <string name="menu_btn3">测试按钮三</string>
     <string name="menu_btn4">测试按钮四</string>
+    <string name="protocol_title">协议与连接</string>
+    <string name="protocol_status_disconnected">未连接</string>
+    <string name="protocol_status_connected">已连接</string>
+    <string name="protocol_data_engine">数据引擎</string>
+    <string name="protocol_data_engine_desc">数据解析与通信协议引擎</string>
+    <string name="protocol_data_interface">数据接口</string>
+    <string name="protocol_data_interface_desc">与下位机通讯的物理接口</string>
+    <string name="protocol_select_hint">请选择通讯接口</string>
+    <string name="protocol_doc_hint">查看详细文档</string>
+    <string name="protocol_option_serial">串口</string>
+    <string name="protocol_option_udp">UDP</string>
+    <string name="protocol_option_tcp_client">TCP客户端</string>
+    <string name="protocol_option_tcp_server">TCP服务端</string>
+    <string name="protocol_option_demo">Demo</string>
 </resources>
