@@ -10,7 +10,7 @@ data class PanelConfig(
     var leftPanelWeight: Float = 2f,
     var rightPanelWeight: Float = 1f,
     var uiScale: Float = 1.0f,
-    var menuBarWidthDp: Int = 48,
+    var menuBarWidthDp: Int = 40,
     var primaryColorHex: String = "#FF2983BB",
     var menuBarBgHex: String = "#FFBACCD9"
 ) {
@@ -33,7 +33,7 @@ data class PanelConfig(
                 leftPanelWeight = it.optDouble("leftPanelWeight", 2.0).toFloat()
                 rightPanelWeight = it.optDouble("rightPanelWeight", 1.0).toFloat()
                 uiScale = it.optDouble("uiScale", 1.0).toFloat()
-                menuBarWidthDp = it.optInt("menuBarWidthDp", 48)
+                menuBarWidthDp = it.optInt("menuBarWidthDp", 40)
                 primaryColorHex = it.optString("primaryColorHex", "#FF2983BB")
                 menuBarBgHex = it.optString("menuBarBgHex", "#FFBACCD9")
             }

@@ -1,4 +1,4 @@
-package com.example.echo
+﻿package com.example.echo
 
 import android.os.Bundle
 import android.os.Handler
@@ -48,7 +48,7 @@ class MainActivity : AppCompatActivity() {
 
     private var isDraggingV = false
     private var protocolView: View? = null
-    private var isShowingProtocol = false
+    private var settingsView: View? = null
 
     private var isDraggingH = false
     private var startX = 0f
@@ -63,6 +63,8 @@ class MainActivity : AppCompatActivity() {
         private const val ICON_DP = 40
         private const val BAR_NARROW = 40
         private const val BAR_WIDE = 56
+        private const val PROTOCOL_MENU_MARKER = -1
+        private const val SETTINGS_MENU_MARKER = -2
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -92,21 +94,16 @@ class MainActivity : AppCompatActivity() {
         workArea.setOnClickListener { if (isMenuOpen) closeMenu() }
     }
 
-    // ====================== 主题配色 ======================
-
     private fun applyColors() {
         val primaryColor = android.graphics.Color.parseColor(panelConfig.primaryColorHex)
         val menuBarBg = android.graphics.Color.parseColor(panelConfig.menuBarBgHex)
 
-        // 应用主色调
         val window = window
         window.statusBarColor = primaryColor
         window.navigationBarColor = primaryColor
 
-        // 设置菜单栏背景
         menuBar.setBackgroundColor(menuBarBg)
 
-        // 设置菜单页顶部标签背景为主色调
         navA.getHeaderView(0)?.setBackgroundColor(primaryColor)
         navB.getHeaderView(0)?.setBackgroundColor(primaryColor)
 
@@ -115,8 +112,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun dpToPx(dp: Int): Int =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp.toFloat(), resources.displayMetrics).toInt()
-
-    // ====================== 动态菜单栏布局 ======================
 
     private fun applyMenuBarLayout() {
         val barDp = panelConfig.menuBarWidthDp.coerceIn(BAR_NARROW, BAR_WIDE)
@@ -128,13 +123,13 @@ class MainActivity : AppCompatActivity() {
         val decorMt = dpToPx((6 * ratio).toInt())
         val btnTopMt = dpToPx((6 * ratio).toInt())
 
-        menuBar.layoutParams.width = barPx; menuBar.requestLayout()
+        menuBar.layoutParams.width = barPx
         (workArea.layoutParams as ViewGroup.MarginLayoutParams).marginStart = barPx
         (scrimOverlay.layoutParams as ViewGroup.MarginLayoutParams).marginStart = barPx
         (navA.layoutParams as ViewGroup.MarginLayoutParams).marginStart = barPx
         (navB.layoutParams as ViewGroup.MarginLayoutParams).marginStart = barPx
+        rootContainer.requestLayout()
 
-        // 装饰圆角方形
         menuBarDecoration.apply {
             val lp = layoutParams
             lp.width = iconSz; lp.height = iconSz
@@ -142,7 +137,7 @@ class MainActivity : AppCompatActivity() {
             layoutParams = lp
         }
 
-        val connectSz = dpToPx((ICON_DP * 1.15 * ratio).toInt()) // 连接按钮比普通图标大15%
+        val connectSz = dpToPx((ICON_DP * 1.15 * ratio).toInt())
 
         val ids = intArrayOf(R.id.menuBarConnect, R.id.menuBarProtocol, R.id.menuBarCommand, R.id.menuBarControl, R.id.menuBarSetting)
         for (id in ids) {
@@ -153,7 +148,6 @@ class MainActivity : AppCompatActivity() {
             lp.topMargin = if (id == R.id.menuBarConnect) btnTopMt else ms
             btn.layoutParams = lp; btn.setPadding(pad, pad, pad, pad)
         }
-        // 更新高亮指示器尺寸 - 保持 64:48 (高:宽) 比例匹配 bg_menu_highlight 矢量图
         menuBarHighlight.layoutParams.height = (barPx * 64f / 48f).toInt()
         AppLogger.i("MainActivity", "菜单栏: ${barDp}dp, 图标: ${(ICON_DP * ratio).toInt()}dp")
     }
@@ -162,8 +156,6 @@ class MainActivity : AppCompatActivity() {
         panelConfig.menuBarWidthDp = barDp; applyMenuBarLayout(); ConfigManager.saveConfig(panelConfig)
         Toast.makeText(this, "菜单栏: $label", Toast.LENGTH_SHORT).show()
     }
-
-    // ====================== 菜单高亮 ======================
 
     private val menuBarButtonIds = intArrayOf(
         R.id.menuBarConnect, R.id.menuBarProtocol,
@@ -178,17 +170,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun highlightMenuBarButton(btnId: Int) {
-        clearMenuBarHighlight() // 先隐藏高亮框
+        clearMenuBarHighlight()
         val btn = findViewById<ImageButton>(btnId)
-        // 在布局完成后定位，再显现，避免出现位置跳跃
-        // 使用 layoutParams.height 而非实测 height，因为 GONE 状态下实测 height=0
         menuBarHighlight.post {
             menuBarHighlight.translationY = btn.y + (btn.height - menuBarHighlight.layoutParams.height) / 2f
             menuBarHighlight.visibility = View.VISIBLE
         }
     }
-
-    // ====================== 菜单控制 ======================
 
     private fun getActiveNav(): NavigationView = if (activeIsA) navA else navB
     private fun getInactiveNav(): NavigationView = if (activeIsA) navB else navA
@@ -223,9 +211,8 @@ class MainActivity : AppCompatActivity() {
         titleRes: Int, menuRes: Int, btnId: Int,
         listener: NavigationView.OnNavigationItemSelectedListener
     ) {
-        // 如果当前显示协议页面，先恢复 paramsContainer
-        if (isShowingProtocol) {
-            restoreParamsContainerDefault()
+        if (isMenuOpen && (currentMenuRes == PROTOCOL_MENU_MARKER || currentMenuRes == SETTINGS_MENU_MARKER)) {
+            removeCustomViewsFromNav(getActiveNav())
         }
         if (isMenuOpen && currentMenuRes == menuRes) return
         currentMenuRes = menuRes; selectedMenuBtnId = btnId
@@ -244,19 +231,29 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setNavContent(nav: NavigationView, title: String, menuRes: Int, listener: NavigationView.OnNavigationItemSelectedListener) {
+        removeCustomViewsFromNav(nav)
+        nav.getHeaderView(0)?.visibility = View.VISIBLE
         nav.getHeaderView(0)?.findViewById<android.widget.TextView>(R.id.navHeaderTitle)?.text = title
         nav.menu.clear(); nav.inflateMenu(menuRes); nav.setNavigationItemSelectedListener(listener)
     }
 
+    private fun removeCustomViewsFromNav(nav: NavigationView) {
+        for (i in nav.childCount - 1 downTo 0) {
+            val child = nav.getChildAt(i)
+            if (child.tag == "protocol_view" || child.tag == "settings_view") {
+                nav.removeView(child)
+            }
+        }
+    }
+
     private fun setupButtons() {
-        setupMenuButton(R.id.menuBarSetting, R.string.nav_header_settings, R.menu.nav_drawer, settingsListener)
+        setupSettingsButton()
         setupProtocolButton()
         setupMenuButton(R.id.menuBarCommand, R.string.nav_header_command, R.menu.menu_command, commandListener)
         setupMenuButton(R.id.menuBarControl, R.string.nav_header_control, R.menu.menu_control, controlListener)
         setupConnectButton()
     }
 
-    /** 菜单按钮：按下放大，松开恢复并执行菜单切换 */
     private fun setupMenuButton(btnId: Int, titleRes: Int, menuRes: Int, listener: NavigationView.OnNavigationItemSelectedListener) {
         findViewById<ImageButton>(btnId).setOnTouchListener { v, e ->
             when (e.action) {
@@ -278,7 +275,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 连接按钮：按下时立即切换状态并放大，松开恢复 */
     private fun setupConnectButton() {
         findViewById<ImageButton>(R.id.menuBarConnect).setOnTouchListener { v, e ->
             when (e.action) {
@@ -309,7 +305,6 @@ class MainActivity : AppCompatActivity() {
 
     // ====================== 协议与连接页面 ======================
 
-    /** 协议按钮：按下放大，松开恢复，切换协议页面显示 */
     private fun setupProtocolButton() {
         findViewById<ImageButton>(R.id.menuBarProtocol).setOnTouchListener { v, e ->
             when (e.action) {
@@ -331,58 +326,98 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 切换协议页面的显示/隐藏 */
     private fun toggleProtocolPage() {
-        if (isShowingProtocol) {
-            // 已显示协议页面，再次点击则关闭
-            restoreParamsContainerDefault()
-            clearMenuBarHighlight()
-            isShowingProtocol = false
+        if (isMenuOpen && currentMenuRes == PROTOCOL_MENU_MARKER) {
+            closeMenu()
+            removeCustomViewsFromNav(getActiveNav())
         } else {
             showProtocolPage()
         }
     }
 
-    /** 显示协议与连接页面 */
     private fun showProtocolPage() {
-        // 关闭已打开的侧边菜单
-        if (isMenuOpen) closeMenu()
-
-        highlightMenuBarButton(R.id.menuBarProtocol)
-
-        // 首次使用时 inflate 布局
         if (protocolView == null) {
-            protocolView = layoutInflater.inflate(R.layout.page_protocol, paramsContainer, false)
+            protocolView = layoutInflater.inflate(R.layout.page_protocol, null)
+            setupDataEngineSpinner()
             setupProtocolSpinner()
+            setupBaudRateSpinner()
+            setupSerialSpinners()
             setupProtocolDocButton()
         }
 
-        // 替换 paramsContainer 内容
-        paramsContainer.removeAllViews()
-        paramsContainer.addView(protocolView)
-        paramsContainer.setPadding(0, 0, 0, 0)
-        isShowingProtocol = true
-    }
+        highlightMenuBarButton(R.id.menuBarProtocol)
+        val title = getString(R.string.protocol_title)
+        val menuPx = getMenuPx()
 
-    /** 恢复 paramsContainer 为默认的"参数列表"占位内容 */
-    private fun restoreParamsContainerDefault() {
-        paramsContainer.removeAllViews()
-        paramsContainer.setPadding(4, 4, 4, 4)
-        val defaultText = TextView(this)
-        defaultText.layoutParams = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT
-        ).apply {
-            gravity = android.view.Gravity.TOP or android.view.Gravity.START
+        if (!isMenuOpen) {
+            val active = getActiveNav()
+            setNavProtocolContent(active, title)
+            openMenu()
+        } else {
+            val oldNav = getActiveNav()
+            val newNav = getInactiveNav()
+            setNavProtocolContent(newNav, title)
+            newNav.translationX = -menuPx
+            newNav.visibility = View.VISIBLE
+            oldNav.animate().cancel()
+            newNav.animate().cancel()
+            oldNav.animate().translationX(-menuPx).setDuration(200).setInterpolator(DecelerateInterpolator())
+                .withEndAction { oldNav.visibility = View.GONE }.start()
+            newNav.animate().translationX(0f).setDuration(280).setInterpolator(DecelerateInterpolator()).start()
+            activeIsA = !activeIsA
         }
-        defaultText.text = getString(R.string.param_title)
-        defaultText.setTextColor(android.graphics.Color.parseColor("#9E9E9E"))
-        defaultText.textSize = 12f
-        paramsContainer.addView(defaultText)
-        isShowingProtocol = false
+
+        currentMenuRes = PROTOCOL_MENU_MARKER
+        selectedMenuBtnId = R.id.menuBarProtocol
     }
 
-    /** 配置协议接口下拉选择框 */
+    private fun setNavProtocolContent(nav: NavigationView, title: String) {
+        nav.getHeaderView(0)?.visibility = View.GONE
+        nav.menu.clear()
+        nav.setNavigationItemSelectedListener(null)
+        removeCustomViewsFromNav(nav)
+        protocolView?.let { v ->
+            if (v.parent != null) {
+                (v.parent as ViewGroup).removeView(v)
+            }
+            v.tag = "protocol_view"
+            val lp = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            )
+            nav.addView(v, lp)
+        }
+        val primaryColor = android.graphics.Color.parseColor(panelConfig.primaryColorHex)
+        protocolView?.findViewById<View>(R.id.protocolHeader)?.setBackgroundColor(primaryColor)
+    }
+
+    private fun setupDataEngineSpinner() {
+        val spinner = protocolView?.findViewById<Spinner>(R.id.dataEngineSpinner) ?: return
+        val options = listOf(
+            getString(R.string.protocol_option_firewater),
+            getString(R.string.protocol_option_justfloat),
+            getString(R.string.protocol_option_rawdata)
+        )
+        val adapter = object : ArrayAdapter<String>(this, R.layout.spinner_item_protocol, options) {
+            override fun getDropDownView(position: Int, convertView: android.view.View?, parent: android.view.ViewGroup): android.view.View {
+                val view = super.getDropDownView(position, convertView, parent) as TextView
+                view.setBackgroundResource(R.drawable.bg_spinner_dropdown_item)
+                view.setPadding(20, 14, 20, 14)
+                return view
+            }
+        }
+        adapter.setDropDownViewResource(R.layout.spinner_item_protocol)
+        spinner.adapter = adapter
+
+        spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                val selected = options[position]
+                AppLogger.i("MainActivity", "数据引擎选择: $selected")
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+    }
+
     private fun setupProtocolSpinner() {
         val spinner = protocolView?.findViewById<Spinner>(R.id.protocolSpinner) ?: return
         val options = listOf(
@@ -406,28 +441,219 @@ class MainActivity : AppCompatActivity() {
         spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 val selected = options[position]
-                val infoText = protocolView?.findViewById<TextView>(R.id.protocolSelectionInfo)
-                infoText?.text = "已选择: $selected"
                 AppLogger.i("MainActivity", "协议接口选择: $selected")
 
-                // 更新状态提示
-                val badge = protocolView?.findViewById<TextView>(R.id.protocolStatusBadge)
-                badge?.text = if (position == 0) getString(R.string.protocol_status_disconnected) else "待连接"
+                val serialPanel = protocolView?.findViewById<View>(R.id.serialConfigPanel)
+                val udpPanel = protocolView?.findViewById<View>(R.id.udpConfigPanel)
+                val tcpClientPanel = protocolView?.findViewById<View>(R.id.tcpClientConfigPanel)
+                val tcpServerPanel = protocolView?.findViewById<View>(R.id.tcpServerConfigPanel)
+                serialPanel?.visibility = View.GONE
+                udpPanel?.visibility = View.GONE
+                tcpClientPanel?.visibility = View.GONE
+                tcpServerPanel?.visibility = View.GONE
+                when (position) {
+                    0 -> serialPanel?.visibility = View.VISIBLE
+                    1 -> udpPanel?.visibility = View.VISIBLE
+                    2 -> tcpClientPanel?.visibility = View.VISIBLE
+                    3 -> tcpServerPanel?.visibility = View.VISIBLE
+                }
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
     }
 
-    /** 配置"?"文档按钮 */
+    private fun setupBaudRateSpinner() {
+        val spinner = protocolView?.findViewById<Spinner>(R.id.baudRateSpinner) ?: return
+        val baudRates = listOf(
+            "4000000", "3500000", "3000000", "2500000", "2000000",
+            "1500000", "1152000", "1000000", "921600", "576000",
+            "500000", "460800", "230400", "115200", "74800",
+            "57600", "38400", "19200", "9600", "4800", "2400", "1200"
+        )
+        val adapter = object : ArrayAdapter<String>(this, R.layout.spinner_item_protocol, baudRates) {
+            override fun getDropDownView(position: Int, convertView: android.view.View?, parent: android.view.ViewGroup): android.view.View {
+                val view = super.getDropDownView(position, convertView, parent) as TextView
+                view.setBackgroundResource(R.drawable.bg_spinner_dropdown_item)
+                view.setPadding(20, 14, 20, 14)
+                return view
+            }
+        }
+        adapter.setDropDownViewResource(R.layout.spinner_item_protocol)
+        spinner.adapter = adapter
+        val defaultIdx = baudRates.indexOf("115200").coerceAtLeast(0)
+        spinner.setSelection(defaultIdx)
+        spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                AppLogger.i("MainActivity", "波特率选择: ${baudRates[position]}")
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+    }
+
+    private fun setupSerialSpinners() {
+        setupChoiceSpinner(R.id.flowControlSpinner, listOf("None", "Hard", "Soft"))
+        setupChoiceSpinner(R.id.paritySpinner, listOf("None", "Even", "Odd", "Space", "Mark"))
+        setupChoiceSpinner(R.id.dataBitsSpinner, listOf("8", "7", "6", "5"))
+        setupChoiceSpinner(R.id.stopBitsSpinner, listOf("1", "1.5", "2"))
+        setupFlowSignalChips()
+    }
+
+    private fun setupFlowSignalChips() {
+        val chipIds = intArrayOf(R.id.chipDtr, R.id.chipRts, R.id.chipBreak)
+        for (id in chipIds) {
+            val chip = protocolView?.findViewById<TextView>(id) ?: continue
+            chip.setOnClickListener {
+                chip.isSelected = !chip.isSelected
+                val state = if (chip.isSelected) "选中" else "取消"
+                AppLogger.i("MainActivity", "流控信号: ${chip.text} $state")
+            }
+        }
+    }
+
+    private fun setupChoiceSpinner(spinnerId: Int, options: List<String>) {
+        val spinner = protocolView?.findViewById<Spinner>(spinnerId) ?: return
+        val adapter = object : ArrayAdapter<String>(this, R.layout.spinner_item_protocol, options) {
+            override fun getDropDownView(position: Int, convertView: android.view.View?, parent: android.view.ViewGroup): android.view.View {
+                val view = super.getDropDownView(position, convertView, parent) as TextView
+                view.setBackgroundResource(R.drawable.bg_spinner_dropdown_item)
+                view.setPadding(20, 14, 20, 14)
+                return view
+            }
+        }
+        adapter.setDropDownViewResource(R.layout.spinner_item_protocol)
+        spinner.adapter = adapter
+        spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                AppLogger.i("MainActivity", "串口参数 spinner#$spinnerId 选择: ${options[position]}")
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+    }
+
     private fun setupProtocolDocButton() {
         val docBtn = protocolView?.findViewById<ImageButton>(R.id.protocolDocBtn) ?: return
         docBtn.setOnClickListener {
             AppLogger.i("MainActivity", "打开协议文档")
             Toast.makeText(this, "打开协议文档", Toast.LENGTH_SHORT).show()
-            // 可以在这里打开文档 URL，例如：
-            // val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://docs.example.com/protocol"))
-            // startActivity(intent)
+        }
+    }
+
+    // ====================== 设置页面 ======================
+
+    private fun setupSettingsButton() {
+        findViewById<ImageButton>(R.id.menuBarSetting).setOnTouchListener { v, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    v.animate().scaleX(1.3f).scaleY(1.3f).setDuration(100).start()
+                    toggleSettingsPage()
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(100).start()
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(100).start()
+                    true
+                }
+                else -> true
+            }
+        }
+    }
+
+    private fun toggleSettingsPage() {
+        if (isMenuOpen && currentMenuRes == SETTINGS_MENU_MARKER) {
+            closeMenu()
+            removeCustomViewsFromNav(getActiveNav())
+        } else {
+            showSettingsPage()
+        }
+    }
+
+    private fun showSettingsPage() {
+        if (settingsView == null) {
+            settingsView = layoutInflater.inflate(R.layout.page_settings, null)
+            setupSettingsSpinner()
+        }
+
+        highlightMenuBarButton(R.id.menuBarSetting)
+        val title = getString(R.string.nav_header_settings)
+        val menuPx = getMenuPx()
+
+        if (!isMenuOpen) {
+            val active = getActiveNav()
+            setNavSettingsContent(active, title)
+            openMenu()
+        } else {
+            val oldNav = getActiveNav()
+            val newNav = getInactiveNav()
+            setNavSettingsContent(newNav, title)
+            newNav.translationX = -menuPx
+            newNav.visibility = View.VISIBLE
+            oldNav.animate().cancel()
+            newNav.animate().cancel()
+            oldNav.animate().translationX(-menuPx).setDuration(200).setInterpolator(DecelerateInterpolator())
+                .withEndAction { oldNav.visibility = View.GONE }.start()
+            newNav.animate().translationX(0f).setDuration(280).setInterpolator(DecelerateInterpolator()).start()
+            activeIsA = !activeIsA
+        }
+
+        currentMenuRes = SETTINGS_MENU_MARKER
+        selectedMenuBtnId = R.id.menuBarSetting
+    }
+
+    private fun setNavSettingsContent(nav: NavigationView, title: String) {
+        nav.getHeaderView(0)?.visibility = View.GONE
+        nav.menu.clear()
+        nav.setNavigationItemSelectedListener(null)
+        removeCustomViewsFromNav(nav)
+        settingsView?.let { v ->
+            if (v.parent != null) {
+                (v.parent as ViewGroup).removeView(v)
+            }
+            v.tag = "settings_view"
+            val lp = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            )
+            nav.addView(v, lp)
+        }
+        val primaryColor = android.graphics.Color.parseColor(panelConfig.primaryColorHex)
+        settingsView?.findViewById<View>(R.id.settingsHeader)?.setBackgroundColor(primaryColor)
+    }
+
+    private fun setupSettingsSpinner() {
+        val spinner = settingsView?.findViewById<Spinner>(R.id.settingsSpinner) ?: return
+        val options = listOf(
+            getString(R.string.settings_option_narrow),
+            getString(R.string.settings_option_wide)
+        )
+        val adapter = object : ArrayAdapter<String>(this, R.layout.spinner_item_protocol, options) {
+            override fun getDropDownView(position: Int, convertView: android.view.View?, parent: android.view.ViewGroup): android.view.View {
+                val view = super.getDropDownView(position, convertView, parent) as TextView
+                view.setBackgroundResource(R.drawable.bg_spinner_dropdown_item)
+                view.setPadding(20, 14, 20, 14)
+                return view
+            }
+        }
+        adapter.setDropDownViewResource(R.layout.spinner_item_protocol)
+        spinner.adapter = adapter
+
+        val currentBarDp = panelConfig.menuBarWidthDp
+        val defaultPos = if (currentBarDp >= 56) 1 else 0
+        spinner.setSelection(defaultPos)
+
+        spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                if (position == 0) {
+                    setBarAndSave(BAR_NARROW, "窄（适合手机）")
+                } else {
+                    setBarAndSave(BAR_WIDE, "宽（适合平板）")
+                }
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
     }
 
@@ -436,6 +662,9 @@ class MainActivity : AppCompatActivity() {
         (paramsContainer.layoutParams as LinearLayout.LayoutParams).weight = panelConfig.rightPanelWeight
         (plotContainer.layoutParams as LinearLayout.LayoutParams).weight = panelConfig.plotWeight
         (outputContainer.layoutParams as LinearLayout.LayoutParams).weight = panelConfig.outputWeight
+        val scale = panelConfig.uiScale
+        rootContainer.scaleX = scale
+        rootContainer.scaleY = scale
     }
 
     private fun setupDividers() {
@@ -469,17 +698,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val settingsListener = NavigationView.OnNavigationItemSelectedListener { item ->
-        when (item.itemId) {
-            R.id.nav_bar_small -> setBarAndSave(BAR_NARROW, "窄 (适合手机)")
-            R.id.nav_bar_large -> setBarAndSave(BAR_WIDE, "宽 (适合平板)")
-            R.id.nav_btn1 -> AppLogger.i("MainActivity", "设置: 测试按钮一")
-            R.id.nav_btn2 -> AppLogger.i("MainActivity", "设置: 测试按钮二")
-            R.id.nav_btn3 -> AppLogger.i("MainActivity", "设置: 测试按钮三")
-            R.id.nav_btn4 -> AppLogger.i("MainActivity", "设置: 测试按钮四")
-        }
-        closeMenu(); true
-    }
     private val commandListener = NavigationView.OnNavigationItemSelectedListener { item -> AppLogger.i("MainActivity", "命令: ${item.title}"); closeMenu(); true }
     private val controlListener = NavigationView.OnNavigationItemSelectedListener { item -> AppLogger.i("MainActivity", "控件: ${item.title}"); closeMenu(); true }
     private val connectionListener = NavigationView.OnNavigationItemSelectedListener { item ->

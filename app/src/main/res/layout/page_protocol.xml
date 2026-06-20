@@ -1,150 +1,394 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#FAFAFA">
+    android:background="@android:color/white">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:orientation="vertical"
+        android:paddingBottom="12dp">
 
-        <!-- ========== 标题栏：协议与连接（深色背景） ========== -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:gravity="center_vertical"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp"
-            android:background="@drawable/bg_protocol_title">
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/protocol_title"
-                android:textColor="@android:color/white"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/protocolStatusBadge"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingStart="10dp"
-                android:paddingEnd="10dp"
-                android:paddingTop="3dp"
-                android:paddingBottom="3dp"
-                android:gravity="center"
-                android:text="@string/protocol_status_disconnected"
-                android:textColor="#FFB0BEC5"
-                android:textSize="11sp"
-                android:background="@drawable/bg_spinner_item" />
+        <LinearLayout android:id="@+id/protocolHeader"
+            android:layout_width="match_parent" android:layout_height="48dp"
+            android:gravity="center_vertical" android:orientation="horizontal"
+            android:paddingStart="20dp" android:paddingEnd="20dp">
+            <TextView android:id="@+id/protocolHeaderTitle"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="@string/protocol_title" android:textColor="@android:color/white"
+                android:textSize="16sp" android:textStyle="bold" />
         </LinearLayout>
 
-        <!-- ========== 卡片容器 ========== -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="12dp">
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:paddingStart="16dp" android:paddingEnd="16dp"
+            android:paddingTop="8dp" android:paddingBottom="2dp"
+            android:text="@string/protocol_data_engine"
+            android:textColor="#FF15599A" android:textSize="15sp" android:textStyle="bold" />
 
-            <!-- 数据引擎 -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:paddingTop="12dp"
-                android:paddingBottom="4dp">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:gravity="center_vertical"
+            android:paddingStart="16dp" android:paddingEnd="16dp" android:paddingBottom="4dp">
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1" android:text="@string/protocol_doc_hint"
+                android:textColor="#9E9E9E" android:textSize="13sp" />
+            <ImageButton android:id="@+id/protocolDocBtn"
+                android:layout_width="18dp" android:layout_height="18dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:scaleType="centerInside" android:src="@drawable/ic_question_mark"
+                android:contentDescription="@string/protocol_doc_hint" android:padding="1dp" />
+        </LinearLayout>
 
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/protocol_data_engine"
-                    android:textColor="#424242"
-                    android:textSize="14sp"
-                    android:textStyle="bold" />
+        <Spinner android:id="@+id/dataEngineSpinner"
+            android:layout_width="match_parent" android:layout_height="44dp"
+            android:layout_marginStart="12dp" android:layout_marginEnd="12dp"
+            android:layout_marginTop="4dp" android:layout_marginBottom="8dp"
+            android:background="@drawable/bg_spinner_item"
+            android:paddingStart="12dp" android:paddingEnd="12dp"
+            android:popupBackground="@android:color/white" android:dropDownVerticalOffset="2dp"
+            android:textSize="15sp" android:textColor="#424242" />
 
-                <ImageButton
-                    android:id="@+id/protocolDocBtn"
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
-                    android:background="?attr/selectableItemBackgroundBorderless"
-                    android:scaleType="centerInside"
-                    android:src="@drawable/ic_question_mark"
-                    android:contentDescription="@string/protocol_doc_hint"
-                    android:padding="4dp" />
+        <View android:layout_width="match_parent" android:layout_height="1dp"
+            android:background="#E0E0E0"
+            android:layout_marginStart="16dp" android:layout_marginEnd="16dp"
+            android:layout_marginTop="4dp" android:layout_marginBottom="8dp" />
+
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:paddingStart="16dp" android:paddingEnd="16dp"
+            android:paddingTop="8dp" android:paddingBottom="2dp"
+            android:text="@string/protocol_data_interface"
+            android:textColor="#FF15599A" android:textSize="15sp" android:textStyle="bold" />
+
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:paddingStart="16dp" android:paddingEnd="16dp"
+            android:paddingBottom="4dp" android:text="@string/protocol_data_interface_desc"
+            android:textColor="#9E9E9E" android:textSize="13sp" />
+
+        <Spinner android:id="@+id/protocolSpinner"
+            android:layout_width="match_parent" android:layout_height="44dp"
+            android:layout_marginStart="12dp" android:layout_marginEnd="12dp"
+            android:layout_marginTop="4dp" android:layout_marginBottom="8dp"
+            android:background="@drawable/bg_spinner_item"
+            android:paddingStart="12dp" android:paddingEnd="12dp"
+            android:popupBackground="@android:color/white" android:dropDownVerticalOffset="2dp"
+            android:textSize="15sp" android:textColor="#424242" />
+
+        <View android:layout_width="match_parent" android:layout_height="1dp"
+            android:background="#E0E0E0"
+            android:layout_marginStart="16dp" android:layout_marginEnd="16dp"
+            android:layout_marginTop="8dp" android:layout_marginBottom="8dp" />
+
+        <!-- 串口参数配置 -->
+        <LinearLayout android:id="@+id/serialConfigPanel"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" android:visibility="gone">
+
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="8dp" android:paddingBottom="4dp"
+                android:text="@string/serial_config_title"
+                android:textColor="#FF15599A" android:textSize="15sp" android:textStyle="bold" />
+
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="6dp" android:paddingBottom="2dp"
+                android:text="@string/serial_port" android:textColor="#757575"
+                android:textSize="13sp" />
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="6dp" android:paddingBottom="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/serial_baud_rate" android:textColor="#757575"
+                    android:textSize="13sp" />
+                <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+                <Spinner android:id="@+id/baudRateSpinner"
+                    android:layout_width="90dp" android:layout_height="22dp"
+                    android:background="@drawable/bg_spinner_item"
+                    android:paddingStart="6dp" android:paddingEnd="6dp"
+                    android:popupBackground="@android:color/white"
+                    android:dropDownVerticalOffset="1dp"
+                    android:dropDownHeight="308dp"
+                    android:textSize="12sp" android:textColor="#424242" />
             </LinearLayout>
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/protocol_data_engine_desc"
-                android:textColor="#9E9E9E"
-                android:textSize="12sp"
-                android:paddingBottom="12dp" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="6dp" android:paddingBottom="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/serial_flow_control" android:textColor="#757575"
+                    android:textSize="13sp" />
+                <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+                <Spinner android:id="@+id/flowControlSpinner"
+                    android:layout_width="90dp" android:layout_height="22dp"
+                    android:background="@drawable/bg_spinner_item"
+                    android:paddingStart="6dp" android:paddingEnd="6dp"
+                    android:popupBackground="@android:color/white" android:dropDownVerticalOffset="1dp"
+                    android:textSize="12sp" android:textColor="#424242" />
+            </LinearLayout>
 
-            <!-- 分割线 -->
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="6dp" android:paddingBottom="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/serial_parity" android:textColor="#757575"
+                    android:textSize="13sp" />
+                <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+                <Spinner android:id="@+id/paritySpinner"
+                    android:layout_width="90dp" android:layout_height="22dp"
+                    android:background="@drawable/bg_spinner_item"
+                    android:paddingStart="6dp" android:paddingEnd="6dp"
+                    android:popupBackground="@android:color/white" android:dropDownVerticalOffset="1dp"
+                    android:textSize="12sp" android:textColor="#424242" />
+            </LinearLayout>
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="6dp" android:paddingBottom="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/serial_data_bits" android:textColor="#757575"
+                    android:textSize="13sp" />
+                <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+                <Spinner android:id="@+id/dataBitsSpinner"
+                    android:layout_width="90dp" android:layout_height="22dp"
+                    android:background="@drawable/bg_spinner_item"
+                    android:paddingStart="6dp" android:paddingEnd="6dp"
+                    android:popupBackground="@android:color/white" android:dropDownVerticalOffset="1dp"
+                    android:textSize="12sp" android:textColor="#424242" />
+            </LinearLayout>
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="6dp" android:paddingBottom="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/serial_stop_bits" android:textColor="#757575"
+                    android:textSize="13sp" />
+                <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+                <Spinner android:id="@+id/stopBitsSpinner"
+                    android:layout_width="90dp" android:layout_height="22dp"
+                    android:background="@drawable/bg_spinner_item"
+                    android:paddingStart="6dp" android:paddingEnd="6dp"
+                    android:popupBackground="@android:color/white" android:dropDownVerticalOffset="1dp"
+                    android:textSize="12sp" android:textColor="#424242" />
+            </LinearLayout>
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="6dp" android:paddingBottom="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/serial_flow_signal" android:textColor="#757575"
+                    android:textSize="13sp" android:paddingBottom="4dp" />
+                <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="start">
+                    <TextView android:id="@+id/chipDtr"
+                        android:layout_width="wrap_content" android:layout_height="28dp"
+                        android:gravity="center" android:paddingStart="12dp" android:paddingEnd="12dp"
+                        android:layout_marginEnd="8dp"
+                        android:text="DTR" android:textSize="12sp" android:textColor="#757575"
+                        android:background="@drawable/bg_chip_selector"
+                        android:clickable="true" android:focusable="true" />
+                    <TextView android:id="@+id/chipRts"
+                        android:layout_width="wrap_content" android:layout_height="28dp"
+                        android:gravity="center" android:paddingStart="12dp" android:paddingEnd="12dp"
+                        android:layout_marginEnd="8dp"
+                        android:text="RTS" android:textSize="12sp" android:textColor="#757575"
+                        android:background="@drawable/bg_chip_selector"
+                        android:clickable="true" android:focusable="true" />
+                    <TextView android:id="@+id/chipBreak"
+                        android:layout_width="wrap_content" android:layout_height="28dp"
+                        android:gravity="center" android:paddingStart="12dp" android:paddingEnd="12dp"
+                        android:text="Break" android:textSize="12sp" android:textColor="#757575"
+                        android:background="@drawable/bg_chip_selector"
+                        android:clickable="true" android:focusable="true" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <View android:layout_width="match_parent" android:layout_height="1dp"
                 android:background="#E0E0E0"
-                android:layout_marginTop="4dp"
-                android:layout_marginBottom="12dp" />
+                android:layout_marginStart="16dp" android:layout_marginEnd="16dp"
+                android:layout_marginTop="8dp" android:layout_marginBottom="8dp" />
+        </LinearLayout>
 
-            <!-- 数据接口 -->
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/protocol_data_interface"
-                android:textColor="#424242"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:paddingBottom="4dp" />
+        <!-- UDP参数配置 -->
+        <LinearLayout android:id="@+id/udpConfigPanel"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" android:visibility="gone">
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/protocol_data_interface_desc"
-                android:textColor="#9E9E9E"
-                android:textSize="12sp"
-                android:paddingBottom="8dp" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="8dp" android:paddingBottom="4dp"
+                android:text="@string/udp_config_title"
+                android:textColor="#FF15599A" android:textSize="15sp" android:textStyle="bold" />
 
-            <!-- Spinner 下拉选择框 -->
-            <Spinner
-                android:id="@+id/protocolSpinner"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:layout_marginTop="4dp"
-                android:background="@drawable/bg_spinner_item"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:popupBackground="@android:color/white"
-                android:dropDownVerticalOffset="2dp"
-                android:textSize="14sp"
-                android:textColor="#424242" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="6dp" android:paddingBottom="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/udp_remote_ip" android:textColor="#757575" android:textSize="13sp" />
+                <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+                <EditText android:id="@+id/udpRemoteIp"
+                    android:layout_width="140dp" android:layout_height="30dp"
+                    android:background="@drawable/bg_spinner_item"
+                    android:paddingStart="8dp" android:paddingEnd="8dp"
+                    android:textSize="13sp" android:textColor="#424242"
+                    android:inputType="text" android:maxLines="1" />
+            </LinearLayout>
 
-            <!-- 分割线 -->
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="6dp" android:paddingBottom="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/udp_remote_port" android:textColor="#757575" android:textSize="13sp" />
+                <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+                <EditText android:id="@+id/udpRemotePort"
+                    android:layout_width="140dp" android:layout_height="30dp"
+                    android:background="@drawable/bg_spinner_item"
+                    android:paddingStart="8dp" android:paddingEnd="8dp"
+                    android:textSize="13sp" android:textColor="#424242"
+                    android:inputType="number" android:maxLines="1" />
+            </LinearLayout>
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="6dp" android:paddingBottom="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/udp_local_port" android:textColor="#757575" android:textSize="13sp" />
+                <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+                <EditText android:id="@+id/udpLocalPort"
+                    android:layout_width="140dp" android:layout_height="30dp"
+                    android:background="@drawable/bg_spinner_item"
+                    android:paddingStart="8dp" android:paddingEnd="8dp"
+                    android:textSize="13sp" android:textColor="#424242"
+                    android:inputType="number" android:maxLines="1" />
+            </LinearLayout>
+
+            <View android:layout_width="match_parent" android:layout_height="1dp"
                 android:background="#E0E0E0"
-                android:layout_marginTop="16dp"
-                android:layout_marginBottom="8dp" />
+                android:layout_marginStart="16dp" android:layout_marginEnd="16dp"
+                android:layout_marginTop="8dp" android:layout_marginBottom="8dp" />
+        </LinearLayout>
 
-            <!-- 当前选项状态提示 -->
-            <TextView
-                android:id="@+id/protocolSelectionInfo"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/protocol_select_hint"
-                android:textColor="#757575"
-                android:textSize="13sp"
-                android:paddingTop="4dp"
-                android:paddingBottom="8dp" />
+        <!-- TCP客户端参数配置 -->
+        <LinearLayout android:id="@+id/tcpClientConfigPanel"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" android:visibility="gone">
 
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="8dp" android:paddingBottom="4dp"
+                android:text="@string/tcp_client_config_title"
+                android:textColor="#FF15599A" android:textSize="15sp" android:textStyle="bold" />
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="6dp" android:paddingBottom="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/tcp_client_server_ip" android:textColor="#757575" android:textSize="13sp" />
+                <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+                <EditText android:id="@+id/tcpClientServerIp"
+                    android:layout_width="140dp" android:layout_height="30dp"
+                    android:background="@drawable/bg_spinner_item"
+                    android:paddingStart="8dp" android:paddingEnd="8dp"
+                    android:textSize="13sp" android:textColor="#424242"
+                    android:inputType="text" android:maxLines="1" />
+            </LinearLayout>
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="6dp" android:paddingBottom="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/tcp_client_network_port" android:textColor="#757575" android:textSize="13sp" />
+                <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+                <EditText android:id="@+id/tcpClientNetworkPort"
+                    android:layout_width="140dp" android:layout_height="30dp"
+                    android:background="@drawable/bg_spinner_item"
+                    android:paddingStart="8dp" android:paddingEnd="8dp"
+                    android:textSize="13sp" android:textColor="#424242"
+                    android:inputType="number" android:maxLines="1" />
+            </LinearLayout>
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="6dp" android:paddingBottom="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/tcp_client_handshake" android:textColor="#757575" android:textSize="13sp" />
+                <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+                <EditText android:id="@+id/tcpClientHandshake"
+                    android:layout_width="140dp" android:layout_height="30dp"
+                    android:background="@drawable/bg_spinner_item"
+                    android:paddingStart="8dp" android:paddingEnd="8dp"
+                    android:textSize="13sp" android:textColor="#424242"
+                    android:inputType="text" android:maxLines="1" />
+            </LinearLayout>
+
+            <View android:layout_width="match_parent" android:layout_height="1dp"
+                android:background="#E0E0E0"
+                android:layout_marginStart="16dp" android:layout_marginEnd="16dp"
+                android:layout_marginTop="8dp" android:layout_marginBottom="8dp" />
+        </LinearLayout>
+
+        <!-- TCP服务端参数配置 -->
+        <LinearLayout android:id="@+id/tcpServerConfigPanel"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" android:visibility="gone">
+
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="8dp" android:paddingBottom="4dp"
+                android:text="@string/tcp_server_config_title"
+                android:textColor="#FF15599A" android:textSize="15sp" android:textStyle="bold" />
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="6dp" android:paddingBottom="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/tcp_server_listen_port" android:textColor="#757575" android:textSize="13sp" />
+                <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+                <EditText android:id="@+id/tcpServerListenPort"
+                    android:layout_width="140dp" android:layout_height="30dp"
+                    android:background="@drawable/bg_spinner_item"
+                    android:paddingStart="8dp" android:paddingEnd="8dp"
+                    android:textSize="13sp" android:textColor="#424242"
+                    android:inputType="number" android:maxLines="1" />
+            </LinearLayout>
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="6dp" android:paddingBottom="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/tcp_server_conn_count" android:textColor="#757575" android:textSize="13sp" />
+                <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+                <TextView android:id="@+id/tcpServerConnCount"
+                    android:layout_width="140dp" android:layout_height="30dp"
+                    android:gravity="center_vertical"
+                    android:paddingStart="8dp" android:paddingEnd="8dp"
+                    android:background="@drawable/bg_spinner_item"
+                    android:textSize="13sp" android:textColor="#424242" android:text="0" />
+            </LinearLayout>
+
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="6dp" android:paddingBottom="2dp"
+                android:text="@string/tcp_server_current_conn" android:textColor="#757575" android:textSize="13sp" />
+
+            <View android:layout_width="match_parent" android:layout_height="1dp"
+                android:background="#E0E0E0"
+                android:layout_marginStart="16dp" android:layout_marginEnd="16dp"
+                android:layout_marginTop="8dp" android:layout_marginBottom="8dp" />
         </LinearLayout>
 
     </LinearLayout>

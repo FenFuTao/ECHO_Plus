@@ -1,4 +1,4 @@
-<resources>
+﻿<resources>
     <string name="app_name">ECHO+</string>
     <string name="connect">连接</string>
     <string name="disconnect">断开</string>
@@ -43,10 +43,36 @@
     <string name="protocol_data_interface">数据接口</string>
     <string name="protocol_data_interface_desc">与下位机通讯的物理接口</string>
     <string name="protocol_select_hint">请选择通讯接口</string>
-    <string name="protocol_doc_hint">查看详细文档</string>
+    <string name="protocol_doc_hint">点击问号，前往详细文档</string>
     <string name="protocol_option_serial">串口</string>
     <string name="protocol_option_udp">UDP</string>
     <string name="protocol_option_tcp_client">TCP客户端</string>
     <string name="protocol_option_tcp_server">TCP服务端</string>
     <string name="protocol_option_demo">Demo</string>
+    <string name="udp_config_title">UDP参数配置</string>
+    <string name="udp_remote_ip">远程IP</string>
+    <string name="udp_remote_port">远程端口</string>
+    <string name="udp_local_port">本地端口</string>
+    <string name="tcp_client_config_title">TCP客户端参数配置</string>
+    <string name="tcp_client_server_ip">服务器IP</string>
+    <string name="tcp_client_network_port">网络端口</string>
+    <string name="tcp_client_handshake">握手数据</string>
+    <string name="tcp_server_config_title">TCP服务端参数配置</string>
+    <string name="tcp_server_listen_port">监听端口</string>
+    <string name="tcp_server_conn_count">连接数量</string>
+    <string name="tcp_server_current_conn">当前连接</string>
+    <string name="protocol_option_firewater">FireWater</string>
+    <string name="protocol_option_justfloat">JustFloat</string>
+    <string name="protocol_option_rawdata">RawData</string>
+    <string name="settings_ui_size">界面尺寸</string>
+    <string name="settings_option_narrow">窄（适合手机）</string>
+    <string name="settings_option_wide">宽（适合平板）</string>
+    <string name="serial_config_title">串口参数配置</string>
+    <string name="serial_port">端口号</string>
+    <string name="serial_baud_rate">波特率</string>
+    <string name="serial_flow_control">数据流控</string>
+    <string name="serial_parity">校验位</string>
+    <string name="serial_data_bits">数据位数</string>
+    <string name="serial_stop_bits">停止位数</string>
+    <string name="serial_flow_signal">流控信号</string>
 </resources>

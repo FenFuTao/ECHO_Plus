@@ -1,9 +1,3 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:id="@+id/nav_bar_small" android:title="@string/bar_small" />
-    <item android:id="@+id/nav_bar_large" android:title="@string/bar_large" />
-    <item android:id="@+id/nav_btn1" android:title="@string/menu_btn1" />
-    <item android:id="@+id/nav_btn2" android:title="@string/menu_btn2" />
-    <item android:id="@+id/nav_btn3" android:title="@string/menu_btn3" />
-    <item android:id="@+id/nav_btn4" android:title="@string/menu_btn4" />
 </menu>
