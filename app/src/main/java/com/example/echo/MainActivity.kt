@@ -70,6 +70,8 @@ class MainActivity : AppCompatActivity() {
     private var outputFontSize: Float get() = panelConfig.outputFontSize; set(v) { panelConfig.outputFontSize = v; ConfigManager.saveConfig(panelConfig) }
     private var outputUseGbk: Boolean get() = panelConfig.outputUseGbk; set(v) { panelConfig.outputUseGbk = v; ConfigManager.saveConfig(panelConfig) }
     private var sendHexMode: Boolean get() = panelConfig.sendHexMode; set(v) { panelConfig.sendHexMode = v; ConfigManager.saveConfig(panelConfig) }
+    /** 接收区原始数据行（原始文本 + 接收时的时间戳 ms，null 表示未记录） */
+    private val outputDataEntries = mutableListOf<Pair<String, Long?>>()
     private lateinit var btnAbcHex: android.view.View
     private lateinit var btnTimestamp: android.view.View
     private lateinit var btnRx: android.view.View
@@ -967,12 +969,12 @@ class MainActivity : AppCompatActivity() {
             }
             return tv
         }
-        btnAbcHex = makeBtn(if (outputShowHex) "Hex" else "Abc", true, true).apply { setOnClickListener { outputShowHex = !outputShowHex; (btnAbcHex as android.widget.TextView).text = if (outputShowHex) "Hex" else "Abc" } }
+        btnAbcHex = makeBtn(if (outputShowHex) "Hex" else "Abc", true, true).apply { setOnClickListener { outputShowHex = !outputShowHex; (btnAbcHex as android.widget.TextView).text = if (outputShowHex) "Hex" else "Abc"; refreshOutputDisplay() } }
         toolbar.addView(btnAbcHex); toolbar.addView(makeSep())
         val clockWrap = FrameLayout(this).apply { layoutParams = LinearLayout.LayoutParams(dpToPx(40), dpToPx(40)) }
         btnTimestamp = clockWrap
         val clockView = ClockIconView(this).apply { layoutParams = FrameLayout.LayoutParams(dpToPx(40), dpToPx(40)); isActive = outputShowTimestamp }
-        clockWrap.setOnClickListener { outputShowTimestamp = !outputShowTimestamp; clockView.isActive = outputShowTimestamp }
+        clockWrap.setOnClickListener { outputShowTimestamp = !outputShowTimestamp; clockView.isActive = outputShowTimestamp; refreshOutputDisplay() }
         clockWrap.setOnTouchListener { v, e ->
             when (e.action) {
                 MotionEvent.ACTION_DOWN -> { v.animate().scaleX(1.20f).scaleY(1.20f).setDuration(50).start(); true }
@@ -983,9 +985,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
         clockWrap.addView(clockView); toolbar.addView(clockWrap)
-        btnRx = makeBtn("Rx", true).apply { (this as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputRxHighlight) "#4FC3F7" else "#9E9E9E")); setOnClickListener { outputRxHighlight = !outputRxHighlight; (btnRx as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputRxHighlight) "#4FC3F7" else "#9E9E9E")) } }
+        btnRx = makeBtn("Rx", true).apply { (this as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputRxHighlight) "#4FC3F7" else "#9E9E9E")); setOnClickListener { outputRxHighlight = !outputRxHighlight; (btnRx as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputRxHighlight) "#4FC3F7" else "#9E9E9E")); refreshOutputDisplay() } }
         toolbar.addView(btnRx)
-        btnTx = makeBtn("Tx", true).apply { (this as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputTxHighlight) "#4FC3F7" else "#9E9E9E")); setOnClickListener { outputTxHighlight = !outputTxHighlight; (btnTx as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputTxHighlight) "#4FC3F7" else "#9E9E9E")) } }
+        btnTx = makeBtn("Tx", true).apply { (this as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputTxHighlight) "#4FC3F7" else "#9E9E9E")); setOnClickListener { outputTxHighlight = !outputTxHighlight; (btnTx as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputTxHighlight) "#4FC3F7" else "#9E9E9E")); refreshOutputDisplay() } }
         toolbar.addView(btnTx); toolbar.addView(makeSep())
         btnFontInc = makeBtn("A+", true, true).apply { setOnClickListener { outputFontSize = (outputFontSize + 1f).coerceAtMost(24f); outputText.textSize = outputFontSize } }
         toolbar.addView(btnFontInc)
@@ -994,7 +996,7 @@ class MainActivity : AppCompatActivity() {
         btnEncoding = makeBtn(if (outputUseGbk) "GBK" else "UTF-8", false, true).apply { setOnClickListener { outputUseGbk = !outputUseGbk; (btnEncoding as android.widget.TextView).text = if (outputUseGbk) "GBK" else "UTF-8" } }
         toolbar.addView(btnEncoding)
         toolbar.addView(makeSep())
-        btnClear = makeBtn("E", true, true).apply { setOnClickListener { outputText.text = "" } }
+        btnClear = makeBtn("E", true, true).apply { setOnClickListener { outputDataEntries.clear(); outputText.text = "" } }
         toolbar.addView(btnClear)
         root.addView(toolbar)
         val scrollView = android.widget.ScrollView(this)
@@ -1196,13 +1198,36 @@ class MainActivity : AppCompatActivity() {
 
     private fun appendOutput(data: String) {
         val cleaned = data.replace("\r\n", "\n").replace("\r", "\n")
-        var display = cleaned
-        if (outputShowHex) { display = cleaned.toByteArray(kotlin.text.Charsets.UTF_8).joinToString(" ") { String.format("%02X", it) } }
-        if (outputShowTimestamp && display.isNotEmpty()) { val ts = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date()); display = "[$ts] $display" }
-        val finalDisplay = display
+        // 保存原始数据 + 当前时间戳（仅在开启时记录）
+        val ts = if (outputShowTimestamp) System.currentTimeMillis() else null
+        outputDataEntries.add(cleaned to ts)
+        refreshOutputDisplay()
+    }
+
+    /** 根据当前 outputShowHex / outputShowTimestamp 重新构建输出显示 */
+    private fun refreshOutputDisplay() {
+        val sb = StringBuilder()
+        for ((idx, entry) in outputDataEntries.withIndex()) {
+            val (text, timestampMs) = entry
+            if (idx > 0) sb.append("\n")
+            // 前缀（Rx/Tx）
+            if (outputRxHighlight && text.isNotEmpty()) sb.append("Rx> ")
+            else if (outputTxHighlight && text.isNotEmpty()) sb.append("Tx> ")
+            // 时间戳：有记录则始终显示（关闭时间戳仅影响新记录是否记录）
+            if (timestampMs != null) {
+                val ts = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date(timestampMs))
+                sb.append("[$ts] ")
+            }
+            // hex 转换（不作用于时间戳文本）
+            if (outputShowHex) {
+                val hexStr = text.toByteArray(kotlin.text.Charsets.UTF_8).joinToString(" ") { String.format("%02X", it) }
+                sb.append(hexStr)
+            } else {
+                sb.append(text)
+            }
+        }
         outputText.post {
-            if (outputText.text.isEmpty()) { outputText.text = finalDisplay }
-            else { var prefix = ""; if (outputRxHighlight && finalDisplay.isNotEmpty()) prefix = "Rx> "; else if (outputTxHighlight && finalDisplay.isNotEmpty()) prefix = "Tx> "; outputText.append("\n$prefix$finalDisplay") }
+            outputText.text = sb.toString()
             val parent = outputText.parent as? android.widget.ScrollView
             parent?.post { parent.fullScroll(android.view.View.FOCUS_DOWN) }
         }
