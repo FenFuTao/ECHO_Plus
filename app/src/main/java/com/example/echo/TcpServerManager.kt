@@ -32,7 +32,7 @@ class TcpServerManager {
     @Volatile
     private var isRunning = false
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val serverExecutor = Executors.newSingleThreadExecutor()
+    private val serverExecutor = Executors.newCachedThreadPool()
     private var countListener: OnConnectionCountChangeListener? = null
     private var stateListener: OnServerStateChangeListener? = null
     private var dataListener: OnDataReceivedListener? = null
@@ -159,4 +159,15 @@ class TcpServerManager {
     }
 
     fun getConnectionCount(): Int = clientSockets.size
+
+    fun broadcast(data: ByteArray) {
+        serverExecutor.submit {
+            for (socket in clientSockets) {
+                try {
+                    socket.getOutputStream().write(data)
+                    socket.getOutputStream().flush()
+                } catch (_: IOException) {}
+            }
+        }
+    }
 }

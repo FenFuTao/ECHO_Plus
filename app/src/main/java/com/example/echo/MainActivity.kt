@@ -66,6 +66,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnFontDec: android.view.View
     private lateinit var btnEncoding: android.view.View
     private lateinit var btnClear: android.view.View
+    private lateinit var sendEditText: android.widget.EditText
+    private lateinit var sendAbcHexBtn: android.view.View
+    private var sendHexMode = false
 
     // ── 分割线拖拽相关 ──
     private var isDraggingV = false
@@ -975,7 +978,73 @@ class MainActivity : AppCompatActivity() {
         outputText.setLineSpacing(2f, 1f)
         outputText.typeface = android.graphics.Typeface.MONOSPACE
         scrollView.addView(outputText); root.addView(scrollView)
+
+        // 发送条
+        val sendBarH = dpToPx(40)
+        val sendBar = LinearLayout(this)
+        sendBar.orientation = LinearLayout.HORIZONTAL
+        sendBar.setBackgroundColor(android.graphics.Color.parseColor("#2A2A2A"))
+        sendBar.setPadding(dpToPx(8), 0, dpToPx(8), 0)
+        sendBar.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, sendBarH)
+        sendBar.gravity = android.view.Gravity.CENTER_VERTICAL
+
+        sendAbcHexBtn = makeBtn("Abc", true, true).apply { setOnClickListener { sendHexMode = !sendHexMode; (sendAbcHexBtn as android.widget.TextView).text = if (sendHexMode) "Hex" else "Abc" } }
+        sendBar.addView(sendAbcHexBtn)
+        sendBar.addView(makeSep())
+
+        sendEditText = android.widget.EditText(this)
+        sendEditText.layoutParams = LinearLayout.LayoutParams(0, dpToPx(34), 1f)
+        sendEditText.textSize = 14f
+        sendEditText.setTextColor(android.graphics.Color.parseColor("#E0E0E0"))
+        sendEditText.setHintTextColor(android.graphics.Color.parseColor("#616161"))
+        sendEditText.setHint("输入发送数据...")
+        sendEditText.setBackgroundColor(android.graphics.Color.parseColor("#1A1A1A"))
+        sendEditText.setPadding(dpToPx(8), 0, dpToPx(8), 0)
+        sendEditText.gravity = android.view.Gravity.CENTER_VERTICAL
+        sendEditText.maxLines = 1
+        sendBar.addView(sendEditText)
+        sendBar.addView(makeSep())
+
+        val sendClearBtn = makeBtn("E", true, true).apply { setOnClickListener { sendEditText.setText("") } }
+        sendBar.addView(sendClearBtn)
+        sendBar.addView(makeSep())
+
+        val sendBtn = makeBtn("发送", true, true).apply { setOnClickListener { sendData() } }
+        sendBar.addView(sendBtn)
+
+        root.addView(sendBar)
         outputContainer.addView(root)
+    }
+
+    private fun sendData() {
+        try {
+            val text = sendEditText.text?.toString() ?: return
+            if (text.isEmpty()) return
+            val bytes: ByteArray
+            val displayStr: String
+            if (sendHexMode) {
+                val hex = text.replace(" ", "").replace("\n", "").trim()
+                if (hex.isEmpty() || hex.length % 2 != 0) { showToast("Hex格式错误"); return }
+                try {
+                    bytes = hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+                } catch (_: NumberFormatException) { showToast("Hex格式错误"); return }
+                displayStr = bytes.joinToString(" ") { String.format("%02X", it) }
+            } else {
+                bytes = text.toByteArray(kotlin.text.Charsets.UTF_8)
+                displayStr = text
+            }
+            appendOutput(displayStr)
+            sendEditText.setText("")
+            // 后台线程发送，避免阻塞主线程
+            Thread {
+                try {
+                    when (selectedProtocolPosition) {
+                        2 -> { if (tcpClientManager.isConnected()) tcpClientManager.send(bytes) }
+                        3 -> { if (tcpServerManager.isRunning()) tcpServerManager.broadcast(bytes) }
+                    }
+                } catch (_: Exception) { }
+            }.start()
+        } catch (_: Exception) { }
     }
 
     private fun appendOutput(data: String) {

@@ -159,4 +159,15 @@ class TcpClientManager {
             stateListener?.onStateChanged(false, "用户断开连接")
         }
     }
+
+    fun send(data: ByteArray) {
+        clientExecutor.submit {
+            try {
+                outputStream?.write(data)
+                outputStream?.flush()
+            } catch (e: IOException) {
+                AppLogger.e("TcpClientManager", "发送数据失败: ${e.message}")
+            }
+        }
+    }
 }
