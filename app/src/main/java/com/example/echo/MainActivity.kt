@@ -70,8 +70,15 @@ class MainActivity : AppCompatActivity() {
     private var outputFontSize: Float get() = panelConfig.outputFontSize; set(v) { panelConfig.outputFontSize = v; ConfigManager.saveConfig(panelConfig) }
     private var outputUseGbk: Boolean get() = panelConfig.outputUseGbk; set(v) { panelConfig.outputUseGbk = v; ConfigManager.saveConfig(panelConfig) }
     private var sendHexMode: Boolean get() = panelConfig.sendHexMode; set(v) { panelConfig.sendHexMode = v; ConfigManager.saveConfig(panelConfig) }
-    /** 接收区原始数据行（原始文本 + 接收时的时间戳 ms，null 表示未记录） */
-    private val outputDataEntries = mutableListOf<Pair<String, Long?>>()
+    private class OutputEntry(
+        val text: String,
+        val timestampMs: Long?,
+        val isTx: Boolean,
+        /** 追加时根据 Rx/Tx 开关决定；false 表示隐藏，永不显示 */
+        val visible: Boolean
+    )
+
+    private val outputDataEntries = mutableListOf<OutputEntry>()
     private lateinit var btnAbcHex: android.view.View
     private lateinit var btnTimestamp: android.view.View
     private lateinit var btnRx: android.view.View
@@ -493,11 +500,11 @@ class MainActivity : AppCompatActivity() {
         spinner.adapter = adapter
 
         // 为所有数据收发器设置统一的接收回调，数据统一送至输出窗口
-        tcpClientTransceiver.setOnDataReceivedListener { data -> appendOutput(data) }
-        tcpServerTransceiver.setOnDataReceivedListener { data -> appendOutput(data) }
-        serialTransceiver.setOnDataReceivedListener { data -> appendOutput(data) }
-        udpTransceiver.setOnDataReceivedListener { data -> appendOutput(data) }
-        demoTransceiver.setOnDataReceivedListener { data -> appendOutput(data) }
+        tcpClientTransceiver.setOnDataReceivedListener { data -> appendOutput(data, false) }
+        tcpServerTransceiver.setOnDataReceivedListener { data -> appendOutput(data, false) }
+        serialTransceiver.setOnDataReceivedListener { data -> appendOutput(data, false) }
+        udpTransceiver.setOnDataReceivedListener { data -> appendOutput(data, false) }
+        demoTransceiver.setOnDataReceivedListener { data -> appendOutput(data, false) }
 
         spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
@@ -1184,7 +1191,7 @@ class MainActivity : AppCompatActivity() {
             } catch (_: NumberFormatException) { showToast("Hex格式错误"); return }
             // 统一以字节的文本解码作为 display，由 appendOutput 根据 outputShowHex 决定最终格式
             val displayStr = bytes.decodeToString()
-            appendOutput(displayStr)
+            appendOutput(displayStr, true)
             // 统一通过 DataTransceiver 接口发送，由接口根据当前连接方式分发
             Thread {
                 try {
@@ -1196,38 +1203,53 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) { }
     }
 
-    private fun appendOutput(data: String) {
+    private fun appendOutput(data: String, isTx: Boolean) {
         val cleaned = data.replace("\r\n", "\n").replace("\r", "\n")
-        // 保存原始数据 + 当前时间戳（仅在开启时记录）
         val ts = if (outputShowTimestamp) System.currentTimeMillis() else null
-        outputDataEntries.add(cleaned to ts)
+        // visible 由追加时的开关决定：Rx 受 outputRxHighlight 控制，Tx 受 outputTxHighlight 控制
+        val visible = if (isTx) outputTxHighlight else outputRxHighlight
+        outputDataEntries.add(OutputEntry(cleaned, ts, isTx, visible))
         refreshOutputDisplay()
     }
 
-    /** 根据当前 outputShowHex / outputShowTimestamp 重新构建输出显示 */
+    /** 根据当前设置重新构建输出显示，仅渲染 visible=true 的条目 */
     private fun refreshOutputDisplay() {
-        val sb = StringBuilder()
-        for ((idx, entry) in outputDataEntries.withIndex()) {
-            val (text, timestampMs) = entry
-            if (idx > 0) sb.append("\n")
-            // 前缀（Rx/Tx）
-            if (outputRxHighlight && text.isNotEmpty()) sb.append("Rx> ")
-            else if (outputTxHighlight && text.isNotEmpty()) sb.append("Tx> ")
-            // 时间戳：有记录则始终显示（关闭时间戳仅影响新记录是否记录）
-            if (timestampMs != null) {
-                val ts = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date(timestampMs))
-                sb.append("[$ts] ")
+        val rxColor = android.graphics.Color.parseColor("#4FC3F7")
+        val txColor = android.graphics.Color.parseColor("#FFB74D")
+        val timestampColor = android.graphics.Color.parseColor("#9E9E9E")
+
+        val spannable = android.text.SpannableStringBuilder()
+        var firstVisible = true
+        for (entry in outputDataEntries) {
+            if (!entry.visible) continue
+            if (!firstVisible) spannable.append("\n")
+            firstVisible = false
+            val lineStart = spannable.length
+
+            // 时间戳：有记录则始终显示
+            if (entry.timestampMs != null) {
+                val ts = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date(entry.timestampMs))
+                val tsStr = "[$ts] "
+                spannable.append(tsStr)
+                spannable.setSpan(android.text.style.ForegroundColorSpan(timestampColor),
+                    lineStart, spannable.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
-            // hex 转换（不作用于时间戳文本）
+
+            // 数据内容
+            val contentStr: String
             if (outputShowHex) {
-                val hexStr = text.toByteArray(kotlin.text.Charsets.UTF_8).joinToString(" ") { String.format("%02X", it) }
-                sb.append(hexStr)
+                contentStr = entry.text.toByteArray(kotlin.text.Charsets.UTF_8).joinToString(" ") { String.format("%02X", it) }
             } else {
-                sb.append(text)
+                contentStr = entry.text
             }
+            val contentStart = spannable.length
+            spannable.append(contentStr)
+            val contentColor = if (entry.isTx) txColor else rxColor
+            spannable.setSpan(android.text.style.ForegroundColorSpan(contentColor),
+                contentStart, spannable.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
         outputText.post {
-            outputText.text = sb.toString()
+            outputText.text = spannable
             val parent = outputText.parent as? android.widget.ScrollView
             parent?.post { parent.fullScroll(android.view.View.FOCUS_DOWN) }
         }
