@@ -21,7 +21,17 @@ data class PanelConfig(
     var tcpClientNetworkPort: String = "",
     var tcpClientHandshake: String = "plot0",
     // ── TCP 服务端参数 ──
-    var tcpServerListenPort: String = ""
+    var tcpServerListenPort: String = "",
+    // ── 接收区工具栏 ──
+    var outputShowHex: Boolean = false,
+    var outputShowTimestamp: Boolean = false,
+    var outputRxHighlight: Boolean = true,
+    var outputTxHighlight: Boolean = true,
+    var outputFontSize: Float = 11f,
+    var outputUseGbk: Boolean = false,
+    // ── 发送区工具栏 ──
+    var sendHexMode: Boolean = false,
+    var sendLineEndingSelection: Int = 1
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("plotWeight", plotWeight.toDouble())
@@ -38,6 +48,14 @@ data class PanelConfig(
         put("tcpClientNetworkPort", tcpClientNetworkPort)
         put("tcpClientHandshake", tcpClientHandshake)
         put("tcpServerListenPort", tcpServerListenPort)
+        put("outputShowHex", outputShowHex)
+        put("outputShowTimestamp", outputShowTimestamp)
+        put("outputRxHighlight", outputRxHighlight)
+        put("outputTxHighlight", outputTxHighlight)
+        put("outputFontSize", outputFontSize.toDouble())
+        put("outputUseGbk", outputUseGbk)
+        put("sendHexMode", sendHexMode)
+        put("sendLineEndingSelection", sendLineEndingSelection)
     }
 
     companion object {
@@ -57,6 +75,14 @@ data class PanelConfig(
                 tcpClientNetworkPort = it.optString("tcpClientNetworkPort", "")
                 tcpClientHandshake = it.optString("tcpClientHandshake", "plot0")
                 tcpServerListenPort = it.optString("tcpServerListenPort", "")
+                outputShowHex = it.optBoolean("outputShowHex", false)
+                outputShowTimestamp = it.optBoolean("outputShowTimestamp", false)
+                outputRxHighlight = it.optBoolean("outputRxHighlight", true)
+                outputTxHighlight = it.optBoolean("outputTxHighlight", true)
+                outputFontSize = it.optDouble("outputFontSize", 11.0).toFloat()
+                outputUseGbk = it.optBoolean("outputUseGbk", false)
+                sendHexMode = it.optBoolean("sendHexMode", false)
+                sendLineEndingSelection = it.optInt("sendLineEndingSelection", 1)
             }
         }
     }
