@@ -47,9 +47,12 @@ class MainActivity : AppCompatActivity() {
     private var isConnected = false
     private var panelConfig = PanelConfig()
 
+    // ── 分割线拖拽相关 ──
     private var isDraggingV = false
     private var protocolView: View? = null
     private var settingsView: View? = null
+    private lateinit var vDividerView: View
+    private lateinit var hDividerView: View
 
     private var isDraggingH = false
     private var startX = 0f
@@ -58,6 +61,8 @@ class MainActivity : AppCompatActivity() {
     private var startRightWeight = 1f
     private var startPlotWeight = 1f
     private var startOutputWeight = 1f
+    /** 拖拽过程中累计的未刷新增量，防抖优化 */
+    private var pendingLayoutRefresh = false
 
     companion object {
         private const val MENU_WIDTH_DP = 280f
@@ -66,6 +71,13 @@ class MainActivity : AppCompatActivity() {
         private const val BAR_WIDE = 56
         private const val PROTOCOL_MENU_MARKER = -1
         private const val SETTINGS_MENU_MARKER = -2
+        // ── 分割面板最小尺寸 (dp) ──
+        private const val MIN_PLOT_HEIGHT_DP = 80
+        private const val MIN_OUTPUT_HEIGHT_DP = 80
+        private const val MIN_LEFT_WIDTH_DP = 166 // plot(80) + divider(6) + output(80)
+        private const val MIN_RIGHT_WIDTH_DP = 80
+        /** 分割线拖拽刷新防抖间隔 (ms) */
+        private const val LAYOUT_REFRESH_INTERVAL_MS = 16L // ~60fps
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -82,6 +94,8 @@ class MainActivity : AppCompatActivity() {
         paramsContainer = findViewById(R.id.paramsContainer)
         menuBarHighlight = findViewById(R.id.menuBarHighlight)
         menuBarDecoration = findViewById(R.id.menuBarDecoration)
+        vDividerView = findViewById(R.id.vDivider)
+        hDividerView = findViewById(R.id.hDivider)
 
         panelConfig = ConfigManager.loadConfig()
         applyColors()
@@ -215,7 +229,10 @@ class MainActivity : AppCompatActivity() {
         if (isMenuOpen && (currentMenuRes == PROTOCOL_MENU_MARKER || currentMenuRes == SETTINGS_MENU_MARKER)) {
             removeCustomViewsFromNav(getActiveNav())
         }
-        if (isMenuOpen && currentMenuRes == menuRes) return
+        if (isMenuOpen && currentMenuRes == menuRes) {
+            closeMenu()
+            return
+        }
         currentMenuRes = menuRes; selectedMenuBtnId = btnId
         val title = getString(titleRes); val menuPx = getMenuPx()
         if (!isMenuOpen) {
@@ -680,36 +697,151 @@ class MainActivity : AppCompatActivity() {
         (paramsContainer.layoutParams as LinearLayout.LayoutParams).weight = panelConfig.rightPanelWeight
         (plotContainer.layoutParams as LinearLayout.LayoutParams).weight = panelConfig.plotWeight
         (outputContainer.layoutParams as LinearLayout.LayoutParams).weight = panelConfig.outputWeight
+        workArea.requestLayout()
     }
+
+    // ====================== 分割线拖拽调整尺寸 ======================
 
     private fun setupDividers() {
-        findViewById<View>(R.id.vDivider).setOnTouchListener { _, e -> onVDividerTouch(e); true }
-        findViewById<View>(R.id.hDivider).setOnTouchListener { _, e -> onHDividerTouch(e); true }
-    }
-
-    private fun onVDividerTouch(e: MotionEvent) {
-        when (e.action) {
-            MotionEvent.ACTION_DOWN -> { isDraggingV = true; startX = e.rawX; startLeftWeight = panelConfig.leftPanelWeight; startRightWeight = panelConfig.rightPanelWeight }
-            MotionEvent.ACTION_MOVE -> {
-                if (!isDraggingV) return; val ww = workArea.width; if (ww <= 0) return
-                val dx = e.rawX - startX; val tw = startLeftWeight + startRightWeight; val nl = startLeftWeight + dx * tw / ww; val nr = tw - nl
-                if (nl < tw * 0.15f || nr < tw * 0.15f) return; panelConfig.leftPanelWeight = nl; panelConfig.rightPanelWeight = nr
-                (leftPanel.layoutParams as LinearLayout.LayoutParams).weight = nl; (paramsContainer.layoutParams as LinearLayout.LayoutParams).weight = nr
-            }
-            MotionEvent.ACTION_UP -> { if (isDraggingV) { isDraggingV = false; ConfigManager.saveConfig(panelConfig) } }
+        vDividerView.setOnTouchListener { _, e ->
+            onVDividerTouch(e)
+            true // 消费事件，阻止传递
+        }
+        hDividerView.setOnTouchListener { _, e ->
+            onHDividerTouch(e)
+            true
         }
     }
 
+    /**
+     * 将像素最小值转换为对应的权重值（扣除固定尺寸分割线后）
+     */
+    private fun pixelToMinWeight(minPx: Int, totalWeight: Float, totalPx: Int, dividerPx: Int): Float {
+        if (totalPx <= dividerPx) return 0f
+        val avail = totalPx - dividerPx
+        return minPx.toFloat() * totalWeight / avail
+    }
+
+    /**
+     * 延迟执行布局刷新（防抖），避免每次 MOVE 都触发 requestLayout
+     */
+    private fun scheduleLayoutRefresh(container: View) {
+        if (!pendingLayoutRefresh) {
+            pendingLayoutRefresh = true
+            container.postDelayed({
+                container.requestLayout()
+                pendingLayoutRefresh = false
+            }, LAYOUT_REFRESH_INTERVAL_MS)
+        }
+    }
+
+    // ────────────── 垂直分割线（左侧面板 / 参数列表） ──────────────
+
+    private fun onVDividerTouch(e: MotionEvent) {
+        when (e.action) {
+            MotionEvent.ACTION_DOWN -> {
+                isDraggingV = true
+                startX = e.rawX
+                startLeftWeight = panelConfig.leftPanelWeight
+                startRightWeight = panelConfig.rightPanelWeight
+                vDividerView.setBackgroundResource(R.drawable.bg_vdivider_dragging)
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                if (!isDraggingV) return
+                val ww = workArea.width
+                val divW = vDividerView.width
+                if (ww <= divW) return
+
+                val dx = e.rawX - startX
+                val tw = startLeftWeight + startRightWeight
+                // 未限幅的新权重
+                val nl = startLeftWeight + dx * tw / ww
+                val nr = tw - nl
+
+                // ── 最小尺寸限幅（像素精确） ──
+                val minLeftPx = dpToPx(MIN_LEFT_WIDTH_DP)
+                val minRightPx = dpToPx(MIN_RIGHT_WIDTH_DP)
+                val minL = pixelToMinWeight(minLeftPx, tw, ww, divW)
+                val minR = pixelToMinWeight(minRightPx, tw, ww, divW)
+                if (nl < minL || nr < minR) return
+
+                panelConfig.leftPanelWeight = nl
+                panelConfig.rightPanelWeight = nr
+                (leftPanel.layoutParams as LinearLayout.LayoutParams).weight = nl
+                (paramsContainer.layoutParams as LinearLayout.LayoutParams).weight = nr
+
+                scheduleLayoutRefresh(workArea)
+            }
+
+            MotionEvent.ACTION_UP -> {
+                if (isDraggingV) {
+                    isDraggingV = false
+                    vDividerView.setBackgroundResource(R.drawable.bg_vdivider)
+                    workArea.requestLayout()
+                    ConfigManager.saveConfig(panelConfig)
+                }
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                isDraggingV = false
+                vDividerView.setBackgroundResource(R.drawable.bg_vdivider)
+            }
+        }
+    }
+
+    // ────────────── 水平分割线（绘图窗口 / 输出窗口） ──────────────
+
     private fun onHDividerTouch(e: MotionEvent) {
         when (e.action) {
-            MotionEvent.ACTION_DOWN -> { isDraggingH = true; startY = e.rawY; startPlotWeight = panelConfig.plotWeight; startOutputWeight = panelConfig.outputWeight }
-            MotionEvent.ACTION_MOVE -> {
-                if (!isDraggingH) return; val ph = leftPanel.height; if (ph <= 0) return
-                val dy = e.rawY - startY; val tw = startPlotWeight + startOutputWeight; val np = startPlotWeight + dy * tw / ph; val no = tw - np
-                if (np < tw * 0.15f || no < tw * 0.15f) return; panelConfig.plotWeight = np; panelConfig.outputWeight = no
-                (plotContainer.layoutParams as LinearLayout.LayoutParams).weight = np; (outputContainer.layoutParams as LinearLayout.LayoutParams).weight = no
+            MotionEvent.ACTION_DOWN -> {
+                isDraggingH = true
+                startY = e.rawY
+                startPlotWeight = panelConfig.plotWeight
+                startOutputWeight = panelConfig.outputWeight
+                hDividerView.setBackgroundResource(R.drawable.bg_hdivider_dragging)
             }
-            MotionEvent.ACTION_UP -> { if (isDraggingH) { isDraggingH = false; ConfigManager.saveConfig(panelConfig) } }
+
+            MotionEvent.ACTION_MOVE -> {
+                if (!isDraggingH) return
+                val ph = leftPanel.height
+                val divH = hDividerView.height
+                if (ph <= divH) return
+
+                val dy = e.rawY - startY
+                val tw = startPlotWeight + startOutputWeight
+                // 未限幅的新权重
+                val np = startPlotWeight + dy * tw / ph
+                val no = tw - np
+
+                // ── 最小尺寸限幅（像素精确） ──
+                val minPlotPx = dpToPx(MIN_PLOT_HEIGHT_DP)
+                val minOutPx = dpToPx(MIN_OUTPUT_HEIGHT_DP)
+                val minP = pixelToMinWeight(minPlotPx, tw, ph, divH)
+                val minO = pixelToMinWeight(minOutPx, tw, ph, divH)
+                if (np < minP || no < minO) return
+
+                panelConfig.plotWeight = np
+                panelConfig.outputWeight = no
+                (plotContainer.layoutParams as LinearLayout.LayoutParams).weight = np
+                (outputContainer.layoutParams as LinearLayout.LayoutParams).weight = no
+
+                scheduleLayoutRefresh(leftPanel)
+            }
+
+            MotionEvent.ACTION_UP -> {
+                if (isDraggingH) {
+                    isDraggingH = false
+                    hDividerView.setBackgroundResource(R.drawable.bg_hdivider)
+                    leftPanel.requestLayout()
+                    ConfigManager.saveConfig(panelConfig)
+                }
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                isDraggingH = false
+                hDividerView.setBackgroundResource(R.drawable.bg_hdivider)
+            }
         }
     }
 

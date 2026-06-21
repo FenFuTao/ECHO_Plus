@@ -30,12 +30,9 @@
                     android:textColor="#9E9E9E" android:textSize="12sp" />
             </FrameLayout>
 
-            <FrameLayout android:id="@+id/hDivider"
-                android:layout_width="match_parent" android:layout_height="14dp"
-                android:background="#00000000">
-                <View android:layout_width="match_parent" android:layout_height="3dp"
-                    android:layout_gravity="center" android:background="#BDBDBD" />
-            </FrameLayout>
+            <View android:id="@+id/hDivider"
+                android:layout_width="match_parent" android:layout_height="6dp"
+                android:background="@drawable/bg_hdivider" />
 
             <FrameLayout android:id="@+id/outputContainer"
                 android:layout_width="match_parent" android:layout_height="0dp"
@@ -47,12 +44,9 @@
             </FrameLayout>
         </LinearLayout>
 
-        <FrameLayout android:id="@+id/vDivider"
-            android:layout_width="14dp" android:layout_height="match_parent"
-            android:background="#00000000">
-            <View android:layout_width="3dp" android:layout_height="match_parent"
-                android:layout_gravity="center" android:background="#BDBDBD" />
-        </FrameLayout>
+        <View android:id="@+id/vDivider"
+            android:layout_width="6dp" android:layout_height="match_parent"
+            android:background="@drawable/bg_vdivider" />
 
         <FrameLayout android:id="@+id/paramsContainer"
             android:layout_width="0dp" android:layout_height="match_parent"
