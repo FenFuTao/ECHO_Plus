@@ -24,6 +24,7 @@ import com.example.echo.util.AppLogger
 import com.example.echo.util.ConfigManager
 import com.example.echo.util.PanelConfig
 import com.google.android.material.navigation.NavigationView
+import android.widget.EditText
 
 class MainActivity : AppCompatActivity() {
 
@@ -45,7 +46,26 @@ class MainActivity : AppCompatActivity() {
     private var currentMenuRes = 0
     private var selectedMenuBtnId = 0
     private var isConnected = false
+    private var selectedProtocolPosition = -1
+    private val tcpServerManager = TcpServerManager()
+    private val tcpClientManager = TcpClientManager()
     private var panelConfig = PanelConfig()
+
+    private lateinit var outputText: android.widget.TextView
+    private var outputShowHex = false
+    private var outputShowTimestamp = false
+    private var outputRxHighlight = false
+    private var outputTxHighlight = false
+    private var outputFontSize = 11f
+    private var outputUseGbk = false
+    private lateinit var btnAbcHex: android.view.View
+    private lateinit var btnTimestamp: android.view.View
+    private lateinit var btnRx: android.view.View
+    private lateinit var btnTx: android.view.View
+    private lateinit var btnFontInc: android.view.View
+    private lateinit var btnFontDec: android.view.View
+    private lateinit var btnEncoding: android.view.View
+    private lateinit var btnClear: android.view.View
 
     // ── 分割线拖拽相关 ──
     private var isDraggingV = false
@@ -96,6 +116,7 @@ class MainActivity : AppCompatActivity() {
         menuBarDecoration = findViewById(R.id.menuBarDecoration)
         vDividerView = findViewById(R.id.vDivider)
         hDividerView = findViewById(R.id.hDivider)
+        setupOutputView()
 
         panelConfig = ConfigManager.loadConfig()
         applyColors()
@@ -298,24 +319,11 @@ class MainActivity : AppCompatActivity() {
             when (e.action) {
                 MotionEvent.ACTION_DOWN -> {
                     v.animate().scaleX(1.3f).scaleY(1.3f).setDuration(100).start()
-                    isConnected = !isConnected
-                    (v as ImageButton).setImageResource(
-                        if (isConnected) R.drawable.ic_connect_on else R.drawable.ic_connect_off
-                    )
-                    val s = if (isConnected) "已连接" else "已断开"
-                    AppLogger.i("MainActivity", "连接状态: $s")
-                    val t = Toast.makeText(this, s, Toast.LENGTH_SHORT); t.show()
-                    Handler(Looper.getMainLooper()).postDelayed({ t.cancel() }, 500)
+                    handleConnectToggle(v as ImageButton)
                     true
                 }
-                MotionEvent.ACTION_UP -> {
-                    v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(100).start()
-                    true
-                }
-                MotionEvent.ACTION_CANCEL -> {
-                    v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(100).start()
-                    true
-                }
+                MotionEvent.ACTION_UP -> { v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(100).start(); true }
+                MotionEvent.ACTION_CANCEL -> { v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(100).start(); true }
                 else -> true
             }
         }
@@ -426,25 +434,32 @@ class MainActivity : AppCompatActivity() {
         }
         adapter.setDropDownViewResource(R.layout.spinner_item_protocol)
         spinner.adapter = adapter
-
+        spinner.setSelection(panelConfig.dataEngineSelection.coerceIn(0, options.size - 1))
         spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                val selected = options[position]
-                AppLogger.i("MainActivity", "数据引擎选择: $selected")
+                AppLogger.i("MainActivity", "数据引擎选择: " + options[position])
+                panelConfig.dataEngineSelection = position
+                ConfigManager.saveConfig(panelConfig)
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
     }
 
+    private fun restoreTcpClientFields() {
+        protocolView?.findViewById<EditText>(R.id.tcpClientServerIp)?.setText(panelConfig.tcpClientServerIp)
+        protocolView?.findViewById<EditText>(R.id.tcpClientNetworkPort)?.setText(panelConfig.tcpClientNetworkPort)
+        protocolView?.findViewById<EditText>(R.id.tcpClientHandshake)?.setText(panelConfig.tcpClientHandshake)
+    }
+
+    private fun restoreTcpServerFields() {
+        protocolView?.findViewById<EditText>(R.id.tcpServerListenPort)?.setText(panelConfig.tcpServerListenPort)
+        val connCountText = protocolView?.findViewById<TextView>(R.id.tcpServerConnCount)
+        connCountText?.text = tcpServerManager.getConnectionCount().toString()
+    }
+
     private fun setupProtocolSpinner() {
         val spinner = protocolView?.findViewById<Spinner>(R.id.protocolSpinner) ?: return
-        val options = listOf(
-            getString(R.string.protocol_option_serial),
-            getString(R.string.protocol_option_udp),
-            getString(R.string.protocol_option_tcp_client),
-            getString(R.string.protocol_option_tcp_server),
-            getString(R.string.protocol_option_demo)
-        )
+        val options = listOf(getString(R.string.protocol_option_serial), getString(R.string.protocol_option_udp), getString(R.string.protocol_option_tcp_client), getString(R.string.protocol_option_tcp_server), getString(R.string.protocol_option_demo))
         val adapter = object : ArrayAdapter<String>(this, R.layout.spinner_item_protocol, options) {
             override fun getDropDownView(position: Int, convertView: android.view.View?, parent: android.view.ViewGroup): android.view.View {
                 val view = super.getDropDownView(position, convertView, parent) as TextView
@@ -456,29 +471,32 @@ class MainActivity : AppCompatActivity() {
         adapter.setDropDownViewResource(R.layout.spinner_item_protocol)
         spinner.adapter = adapter
 
+        tcpClientManager.setOnDataReceivedListener { data -> appendOutput(data) }
+        tcpServerManager.setOnDataReceivedListener { data -> appendOutput(data) }
+
         spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                val selected = options[position]
-                AppLogger.i("MainActivity", "协议接口选择: $selected")
-
+                AppLogger.i("MainActivity", "协议接口选择: " + options[position])
+                if ((selectedProtocolPosition == 2 || selectedProtocolPosition == 3) && position != selectedProtocolPosition && isConnected) { disconnectCurrent() }
+                selectedProtocolPosition = position
                 val serialPanel = protocolView?.findViewById<View>(R.id.serialConfigPanel)
                 val udpPanel = protocolView?.findViewById<View>(R.id.udpConfigPanel)
                 val tcpClientPanel = protocolView?.findViewById<View>(R.id.tcpClientConfigPanel)
                 val tcpServerPanel = protocolView?.findViewById<View>(R.id.tcpServerConfigPanel)
-                serialPanel?.visibility = View.GONE
-                udpPanel?.visibility = View.GONE
-                tcpClientPanel?.visibility = View.GONE
-                tcpServerPanel?.visibility = View.GONE
+                serialPanel?.visibility = View.GONE; udpPanel?.visibility = View.GONE; tcpClientPanel?.visibility = View.GONE; tcpServerPanel?.visibility = View.GONE
                 when (position) {
                     0 -> serialPanel?.visibility = View.VISIBLE
                     1 -> udpPanel?.visibility = View.VISIBLE
-                    2 -> tcpClientPanel?.visibility = View.VISIBLE
-                    3 -> tcpServerPanel?.visibility = View.VISIBLE
+                    2 -> { tcpClientPanel?.visibility = View.VISIBLE; restoreTcpClientFields() }
+                    3 -> { tcpServerPanel?.visibility = View.VISIBLE; restoreTcpServerFields() }
                 }
+                panelConfig.protocolSelection = position
+                ConfigManager.saveConfig(panelConfig)
             }
-
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
+        val savedPos = panelConfig.protocolSelection.coerceIn(0, options.size - 1)
+        spinner.setSelection(savedPos)
     }
 
     private fun setupBaudRateSpinner() {
@@ -845,6 +863,180 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private inner class ClockIconView(context: android.content.Context) : View(context) {
+        private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.parseColor("#9E9E9E")
+            strokeWidth = dpToPx(2).toFloat()
+            style = android.graphics.Paint.Style.STROKE
+            strokeCap = android.graphics.Paint.Cap.ROUND
+        }
+        private val paintActive = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.parseColor("#4FC3F7")
+            strokeWidth = dpToPx(2).toFloat()
+            style = android.graphics.Paint.Style.STROKE
+            strokeCap = android.graphics.Paint.Cap.ROUND
+        }
+        var isActive = false
+            set(value) { field = value; invalidate() }
+        override fun onDraw(canvas: android.graphics.Canvas) {
+            super.onDraw(canvas)
+            val cx = width / 2f
+            val cy = height / 2f
+            val radius = minOf(cx, cy) * 0.45f
+            val p = if (isActive) paintActive else paint
+            canvas.drawLine(cx, cy, cx, cy - radius, p)
+            val hourAngle = Math.toRadians(60.0)
+            val hx = cx + (radius * kotlin.math.cos(hourAngle)).toFloat()
+            val hy = cy + (radius * kotlin.math.sin(hourAngle)).toFloat()
+            canvas.drawLine(cx, cy, hx, hy, p)
+        }
+    }
+
+    private fun setupOutputView() {
+        val toolbarH = dpToPx(40)
+        val root = LinearLayout(this)
+        root.orientation = LinearLayout.VERTICAL
+        root.layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        val toolbar = LinearLayout(this)
+        toolbar.orientation = LinearLayout.HORIZONTAL
+        toolbar.setBackgroundColor(android.graphics.Color.parseColor("#2A2A2A"))
+        toolbar.setPadding(dpToPx(8), 0, dpToPx(8), 0)
+        toolbar.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, toolbarH)
+        toolbar.gravity = android.view.Gravity.CENTER_VERTICAL
+        fun makeSep(): android.widget.TextView {
+            val sep = android.widget.TextView(this)
+            sep.text = "|"
+            sep.textSize = 17f
+            sep.setTextColor(android.graphics.Color.parseColor("#424242"))
+            sep.setPadding(dpToPx(4), 0, dpToPx(4), 0)
+            return sep
+        }
+        fun makeBtn(text: String, fixedWidth: Boolean = true, highlightOnPress: Boolean = false): android.view.View {
+            val defaultColor = android.graphics.Color.parseColor("#9E9E9E")
+            val highlightColor = android.graphics.Color.parseColor("#4FC3F7")
+            val tv = android.widget.TextView(this)
+            tv.text = text; tv.textSize = 17f
+            tv.typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD_ITALIC)
+            tv.setPadding(dpToPx(3), 0, dpToPx(3), 0)
+            tv.setTextColor(defaultColor)
+            tv.gravity = android.view.Gravity.CENTER
+            tv.minimumHeight = dpToPx(40)
+            if (fixedWidth) { tv.minimumWidth = dpToPx(44) }
+            tv.isClickable = true
+            tv.setOnTouchListener { v, e ->
+                when (e.action) {
+                    MotionEvent.ACTION_DOWN -> { if (highlightOnPress) { tv.setTextColor(highlightColor) }; v.animate().scaleX(1.20f).scaleY(1.20f).setDuration(50).start(); true }
+                    MotionEvent.ACTION_MOVE -> { val ib = e.x in 0f..v.width.toFloat() && e.y in 0f..v.height.toFloat(); if (!ib && v.scaleX > 1.0f) { v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(50).withEndAction { if (highlightOnPress) { tv.setTextColor(defaultColor) } }.start() } else if (ib && v.scaleX <= 1.0f) { if (highlightOnPress) { tv.setTextColor(highlightColor) }; v.animate().scaleX(1.20f).scaleY(1.20f).setDuration(50).start() }; true }
+                    MotionEvent.ACTION_UP -> { v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(50).withEndAction { if (highlightOnPress) { tv.setTextColor(defaultColor) } }.start(); v.performClick(); true }
+                    MotionEvent.ACTION_CANCEL -> { v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(50).withEndAction { if (highlightOnPress) { tv.setTextColor(defaultColor) } }.start(); true }
+                    else -> true
+                }
+            }
+            return tv
+        }
+        btnAbcHex = makeBtn("Abc", true, true).apply { setOnClickListener { outputShowHex = !outputShowHex; (btnAbcHex as android.widget.TextView).text = if (outputShowHex) "Hex" else "Abc" } }
+        toolbar.addView(btnAbcHex); toolbar.addView(makeSep())
+        val clockWrap = FrameLayout(this).apply { layoutParams = LinearLayout.LayoutParams(dpToPx(40), dpToPx(40)) }
+        btnTimestamp = clockWrap
+        val clockView = ClockIconView(this).apply { layoutParams = FrameLayout.LayoutParams(dpToPx(40), dpToPx(40)) }
+        clockWrap.setOnClickListener { outputShowTimestamp = !outputShowTimestamp; clockView.isActive = outputShowTimestamp }
+        clockWrap.setOnTouchListener { v, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> { v.animate().scaleX(1.20f).scaleY(1.20f).setDuration(50).start(); true }
+                MotionEvent.ACTION_MOVE -> { val ib = e.x in 0f..v.width.toFloat() && e.y in 0f..v.height.toFloat(); if (!ib && v.scaleX > 1.0f) { v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(50).start() } else if (ib && v.scaleX <= 1.0f) { v.animate().scaleX(1.20f).scaleY(1.20f).setDuration(50).start() }; true }
+                MotionEvent.ACTION_UP -> { v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(50).start(); v.performClick(); true }
+                MotionEvent.ACTION_CANCEL -> { v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(50).start(); true }
+                else -> true
+            }
+        }
+        clockWrap.addView(clockView); toolbar.addView(clockWrap)
+        btnRx = makeBtn("Rx", true).apply { setOnClickListener { outputRxHighlight = !outputRxHighlight; (btnRx as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputRxHighlight) "#4FC3F7" else "#9E9E9E")) } }
+        toolbar.addView(btnRx)
+        btnTx = makeBtn("Tx", true).apply { setOnClickListener { outputTxHighlight = !outputTxHighlight; (btnTx as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputTxHighlight) "#4FC3F7" else "#9E9E9E")) } }
+        toolbar.addView(btnTx); toolbar.addView(makeSep())
+        btnFontInc = makeBtn("A+", true, true).apply { setOnClickListener { outputFontSize = (outputFontSize + 1f).coerceAtMost(24f); outputText.textSize = outputFontSize } }
+        toolbar.addView(btnFontInc)
+        btnFontDec = makeBtn("A-", true, true).apply { setOnClickListener { outputFontSize = (outputFontSize - 1f).coerceAtLeast(8f); outputText.textSize = outputFontSize } }
+        toolbar.addView(btnFontDec); toolbar.addView(makeSep())
+        btnEncoding = makeBtn("UTF-8", false, true).apply { setOnClickListener { outputUseGbk = !outputUseGbk; (btnEncoding as android.widget.TextView).text = if (outputUseGbk) "GBK" else "UTF-8" } }
+        toolbar.addView(btnEncoding)
+        toolbar.addView(makeSep())
+        btnClear = makeBtn("E", true, true).apply { setOnClickListener { outputText.text = "" } }
+        toolbar.addView(btnClear)
+        root.addView(toolbar)
+        val scrollView = android.widget.ScrollView(this)
+        scrollView.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        scrollView.isVerticalScrollBarEnabled = true
+        scrollView.setPadding(dpToPx(4), dpToPx(4), dpToPx(4), dpToPx(4))
+        outputText = android.widget.TextView(this)
+        outputText.layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT)
+        outputText.textSize = outputFontSize
+        outputText.setTextColor(android.graphics.Color.parseColor("#E0E0E0"))
+        outputText.setLineSpacing(2f, 1f)
+        outputText.typeface = android.graphics.Typeface.MONOSPACE
+        scrollView.addView(outputText); root.addView(scrollView)
+        outputContainer.addView(root)
+    }
+
+    private fun appendOutput(data: String) {
+        val cleaned = data.replace("\r\n", "\n").replace("\r", "\n")
+        var display = cleaned
+        if (outputShowHex) { display = cleaned.toByteArray(kotlin.text.Charsets.UTF_8).joinToString(" ") { String.format("%02X", it) } }
+        if (outputShowTimestamp && display.isNotEmpty()) { val ts = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date()); display = "[$ts] $display" }
+        val finalDisplay = display
+        outputText.post {
+            if (outputText.text.isEmpty()) { outputText.text = finalDisplay }
+            else { var prefix = ""; if (outputRxHighlight && finalDisplay.isNotEmpty()) prefix = "Rx> "; else if (outputTxHighlight && finalDisplay.isNotEmpty()) prefix = "Tx> "; outputText.append("\n$prefix$finalDisplay") }
+            val parent = outputText.parent as? android.widget.ScrollView
+            parent?.post { parent.fullScroll(android.view.View.FOCUS_DOWN) }
+        }
+    }
+
+    private fun getProtocolName(position: Int): String = when (position) { 0 -> "串口"; 1 -> "UDP"; 2 -> "TCP客户端"; 3 -> "TCP服务端"; 4 -> "Demo"; else -> "未知" }
+
+    private fun handleConnectToggle(btn: ImageButton) {
+        when (selectedProtocolPosition) {
+            2 -> {
+                if (tcpClientManager.isConnected()) { tcpClientManager.disconnect(); isConnected = false; btn.setImageResource(R.drawable.ic_connect_off); AppLogger.i("MainActivity", "TCP客户端断开"); showToast("TCP客户端已断开") }
+                else {
+                    val ip = protocolView?.findViewById<EditText>(R.id.tcpClientServerIp)?.text?.toString()
+                    val portStr = protocolView?.findViewById<EditText>(R.id.tcpClientNetworkPort)?.text?.toString()
+                    val handshake = protocolView?.findViewById<EditText>(R.id.tcpClientHandshake)?.text?.toString()
+                    if (ip.isNullOrBlank()) { showToast("请输入服务器IP"); return }
+                    val port = portStr?.toIntOrNull()
+                    if (port == null || port !in 1..65535) { showToast("请输入有效端口 (1-65535)"); return }
+                    val hs = if (handshake.isNullOrBlank()) "plot0" else handshake
+                    panelConfig.tcpClientServerIp = ip; panelConfig.tcpClientNetworkPort = portStr; panelConfig.tcpClientHandshake = hs; ConfigManager.saveConfig(panelConfig)
+                    if (tcpClientManager.connect(ip, port, hs)) { isConnected = true; btn.setImageResource(R.drawable.ic_connect_on); showToast("正在连接 $ip:$port ...") }
+                }
+            }
+            3 -> {
+                if (tcpServerManager.isRunning()) { tcpServerManager.stop(); isConnected = false; btn.setImageResource(R.drawable.ic_connect_off); showToast("TCP服务端已停止") }
+                else {
+                    val portStr = protocolView?.findViewById<EditText>(R.id.tcpServerListenPort)?.text?.toString()
+                    val port = portStr?.toIntOrNull()
+                    if (port == null || port !in 1..65535) { showToast("请输入有效端口 (1-65535)"); return }
+                    panelConfig.tcpServerListenPort = portStr; ConfigManager.saveConfig(panelConfig)
+                    if (tcpServerManager.start(port)) { isConnected = true; btn.setImageResource(R.drawable.ic_connect_on); showToast("TCP服务端已启动，端口: $port") }
+                    else { showToast("启动失败，端口可能被占用") }
+                }
+            }
+            else -> {
+                isConnected = !isConnected
+                btn.setImageResource(if (isConnected) R.drawable.ic_connect_on else R.drawable.ic_connect_off)
+                showToast(if (isConnected) "已连接" else "已断开")
+            }
+        }
+    }
+
+    private fun disconnectCurrent() {
+        if (!isConnected) return
+        when (selectedProtocolPosition) { 2 -> tcpClientManager.disconnect(); 3 -> tcpServerManager.stop() }
+        isConnected = false; findViewById<ImageButton>(R.id.menuBarConnect).setImageResource(R.drawable.ic_connect_off); showToast("已断开")
+    }
+
+    private fun showToast(msg: String) { val t = Toast.makeText(this, msg, Toast.LENGTH_SHORT); t.show(); Handler(Looper.getMainLooper()).postDelayed({ t.cancel() }, 500) }
+
     private fun restartApp() {
         val intent = Intent(this, MainActivity::class.java)
         intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK
@@ -857,8 +1049,8 @@ class MainActivity : AppCompatActivity() {
     private val controlListener = NavigationView.OnNavigationItemSelectedListener { item -> AppLogger.i("MainActivity", "控件: ${item.title}"); closeMenu(); true }
     private val connectionListener = NavigationView.OnNavigationItemSelectedListener { item ->
         when (item.itemId) {
-            R.id.conn_connect -> { isConnected = true; findViewById<ImageButton>(R.id.menuBarConnect).setImageResource(R.drawable.ic_connect_on); AppLogger.i("MainActivity", "已连接"); val t = Toast.makeText(this, "已连接", Toast.LENGTH_SHORT); t.show(); Handler(Looper.getMainLooper()).postDelayed({ t.cancel() }, 500) }
-            R.id.conn_disconnect -> { isConnected = false; findViewById<ImageButton>(R.id.menuBarConnect).setImageResource(R.drawable.ic_connect_off); AppLogger.i("MainActivity", "已断开"); val t = Toast.makeText(this, "已断开", Toast.LENGTH_SHORT); t.show(); Handler(Looper.getMainLooper()).postDelayed({ t.cancel() }, 500) }
+            R.id.conn_connect -> { handleConnectToggle(findViewById(R.id.menuBarConnect)) }
+            R.id.conn_disconnect -> { disconnectCurrent() }
         }
         closeMenu(); true
     }

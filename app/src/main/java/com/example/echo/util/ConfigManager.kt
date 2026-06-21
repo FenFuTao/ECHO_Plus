@@ -12,7 +12,16 @@ data class PanelConfig(
     var uiScale: Float = 1.0f,
     var menuBarWidthDp: Int = 40,
     var primaryColorHex: String = "#FF2983BB",
-    var menuBarBgHex: String = "#FFBACCD9"
+    var menuBarBgHex: String = "#FFBACCD9",
+    // ── 数据引擎与数据接口选择 ──
+    var dataEngineSelection: Int = 0,
+    var protocolSelection: Int = 0,
+    // ── TCP 客户端参数 ──
+    var tcpClientServerIp: String = "",
+    var tcpClientNetworkPort: String = "",
+    var tcpClientHandshake: String = "plot0",
+    // ── TCP 服务端参数 ──
+    var tcpServerListenPort: String = ""
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("plotWeight", plotWeight.toDouble())
@@ -23,6 +32,12 @@ data class PanelConfig(
         put("menuBarWidthDp", menuBarWidthDp)
         put("primaryColorHex", primaryColorHex)
         put("menuBarBgHex", menuBarBgHex)
+        put("dataEngineSelection", dataEngineSelection)
+        put("protocolSelection", protocolSelection)
+        put("tcpClientServerIp", tcpClientServerIp)
+        put("tcpClientNetworkPort", tcpClientNetworkPort)
+        put("tcpClientHandshake", tcpClientHandshake)
+        put("tcpServerListenPort", tcpServerListenPort)
     }
 
     companion object {
@@ -36,6 +51,12 @@ data class PanelConfig(
                 menuBarWidthDp = it.optInt("menuBarWidthDp", 40)
                 primaryColorHex = it.optString("primaryColorHex", "#FF2983BB")
                 menuBarBgHex = it.optString("menuBarBgHex", "#FFBACCD9")
+                dataEngineSelection = it.optInt("dataEngineSelection", 0)
+                protocolSelection = it.optInt("protocolSelection", 0)
+                tcpClientServerIp = it.optString("tcpClientServerIp", "")
+                tcpClientNetworkPort = it.optString("tcpClientNetworkPort", "")
+                tcpClientHandshake = it.optString("tcpClientHandshake", "plot0")
+                tcpServerListenPort = it.optString("tcpServerListenPort", "")
             }
         }
     }
