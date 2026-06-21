@@ -81,6 +81,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var sendEditText: android.widget.EditText
     private lateinit var sendAbcHexBtn: android.view.View
     private lateinit var lineEndingSpinner: Spinner
+    /** 标记当前 TextWatcher 的 afterTextChanged 是否由程序主动 setText 触发 */
+    private var textWatcherSuspended = false
 
     // ── 分割线拖拽相关 ──
     private var isDraggingV = false
@@ -1016,7 +1018,7 @@ class MainActivity : AppCompatActivity() {
         sendBar.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, sendBarH)
         sendBar.gravity = android.view.Gravity.CENTER_VERTICAL
 
-        sendAbcHexBtn = makeBtn(if (sendHexMode) "Hex" else "Abc", true, true).apply { setOnClickListener { sendHexMode = !sendHexMode; (sendAbcHexBtn as android.widget.TextView).text = if (sendHexMode) "Hex" else "Abc" } }
+        sendAbcHexBtn = makeBtn(if (sendHexMode) "Hex" else "Abc", true, true).apply { setOnClickListener { sendHexMode = !sendHexMode; if (sendHexMode) { asciiToHex(panelConfig.sendBufferText) } else { hexToAscii(panelConfig.sendBufferText) }; (sendAbcHexBtn as android.widget.TextView).text = if (sendHexMode) "Hex" else "Abc"; sendEditText.setHint(if (sendHexMode) "输入Hex (0-9 A-F)..." else "输入发送数据...") } }
         sendBar.addView(sendAbcHexBtn)
         sendBar.addView(makeSep())
 
@@ -1025,11 +1027,69 @@ class MainActivity : AppCompatActivity() {
         sendEditText.textSize = 14f
         sendEditText.setTextColor(android.graphics.Color.parseColor("#E0E0E0"))
         sendEditText.setHintTextColor(android.graphics.Color.parseColor("#616161"))
-        sendEditText.setHint("输入发送数据...")
+        sendEditText.setHint(if (sendHexMode) "输入Hex (0-9 A-F)..." else "输入发送数据...")
         sendEditText.setBackgroundColor(android.graphics.Color.parseColor("#1A1A1A"))
         sendEditText.setPadding(dpToPx(8), 0, dpToPx(8), 0)
         sendEditText.gravity = android.view.Gravity.CENTER_VERTICAL
         sendEditText.maxLines = 1
+        // 恢复上次的发送缓冲区内容
+        // 根据当前模式将 hex 核心缓冲区转成正确的显示格式
+        if (sendHexMode) {
+            val hex = panelConfig.sendBufferText
+            val formatted = hex.chunked(2).joinToString(" ")
+            sendEditText.setText(formatted)
+            sendEditText.setSelection(formatted.length)
+        } else {
+            hexToAscii(panelConfig.sendBufferText)
+        }
+        // 实时保存缓冲区内容 + 输入过滤
+        sendEditText.addTextChangedListener(object : android.text.TextWatcher {
+            private var isUpdating = false
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                if (isUpdating || s == null || textWatcherSuspended) return
+                if (sendHexMode) {
+                    // Hex 模式：只保留 0-9 a-f A-F，自动格式化每两位加空格
+                    val pure = s.toString().filter { c -> c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F' }
+                    val formatted = pure.chunked(2).joinToString(" ")
+                    if (formatted != s.toString()) {
+                        isUpdating = true
+                        val cursor = sendEditText.selectionStart
+                        val textBefore = s.substring(0, cursor.coerceIn(0, s.length))
+                        val hexBefore = textBefore.filter { c -> c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F' }
+                        s.replace(0, s.length, formatted)
+                        val newCursor = if (hexBefore.isEmpty()) 0 else {
+                            val pairs = (hexBefore.length + 1) / 2
+                            (pairs * 3 - 1).coerceAtMost(formatted.length)
+                        }
+                        sendEditText.setSelection(newCursor)
+                        isUpdating = false
+                    }
+                    panelConfig.sendBufferText = pure
+                } else {
+                    // Abc 模式：将用户输入的字符转换为 hex 核心格式
+                    val rawText = s.toString()
+                    val hexStr = rawText.toByteArray(kotlin.text.Charsets.UTF_8).joinToString("") { String.format("%02X", it) }
+                    panelConfig.sendBufferText = hexStr
+                    // 不可打印字符显示为空格
+                    val displaySb = StringBuilder()
+                    for (ch in rawText) {
+                        val b = ch.code
+                        if (b in 0x20..0x7E) displaySb.append(ch) else displaySb.append(' ')
+                    }
+                    val displayText = displaySb.toString()
+                    if (displayText != s.toString()) {
+                        isUpdating = true
+                        val cursor = sendEditText.selectionStart
+                        s.replace(0, s.length, displayText)
+                        sendEditText.setSelection(cursor.coerceAtMost(displayText.length))
+                        isUpdating = false
+                    }
+                }
+                ConfigManager.saveConfig(panelConfig)
+            }
+        })
         sendBar.addView(sendEditText)
         sendBar.addView(makeSep())
 
@@ -1082,25 +1142,47 @@ class MainActivity : AppCompatActivity() {
         outputContainer.addView(root)
     }
 
+    /** Abc → Hex：将 hex 核心缓冲区格式化为带空格的 Hex 显示 */
+    private fun asciiToHex(hexStr: String) {
+        val formatted = hexStr.chunked(2).joinToString(" ")
+        textWatcherSuspended = true
+        sendEditText.setText(formatted)
+        sendEditText.setSelection(formatted.length)
+        textWatcherSuspended = false
+    }
+
+    /** Hex → Abc：将 Hex 解析为字节，不可打印字符显示为空格 */
+    private fun hexToAscii(hexStr: String) {
+        try {
+            val pure = hexStr.filter { c -> c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F' }
+            if (pure.isEmpty()) return
+            val adjusted = if (pure.length % 2 != 0) pure + "0" else pure
+            val sb = StringBuilder()
+            for (i in adjusted.indices step 2) {
+                val byteVal = adjusted.substring(i, i + 2).toInt(16)
+                if (byteVal in 0x20..0x7E) sb.append(byteVal.toChar()) else sb.append(' ')
+            }
+            textWatcherSuspended = true
+            sendEditText.setText(sb.toString())
+            sendEditText.setSelection(sb.length)
+            textWatcherSuspended = false
+        } catch (_: Exception) {
+            // 解析失败时不做任何操作，保持原内容
+        }
+    }
+
     private fun sendData() {
         try {
-            val text = sendEditText.text?.toString() ?: return
-            if (text.isEmpty()) return
-            val bytes: ByteArray
-            val displayStr: String
-            if (sendHexMode) {
-                val hex = text.replace(" ", "").replace("\n", "").trim()
-                if (hex.isEmpty() || hex.length % 2 != 0) { showToast("Hex格式错误"); return }
-                try {
-                    bytes = hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-                } catch (_: NumberFormatException) { showToast("Hex格式错误"); return }
-                displayStr = bytes.joinToString(" ") { String.format("%02X", it) }
-            } else {
-                bytes = text.toByteArray(kotlin.text.Charsets.UTF_8)
-                displayStr = text
-            }
+            // 始终从 hex 核心缓冲区读取并转换为字节发送
+            val hex = panelConfig.sendBufferText
+            if (hex.isEmpty()) return
+            if (hex.length % 2 != 0) { showToast("Hex格式错误"); return }
+            val bytes: ByteArray = try {
+                hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            } catch (_: NumberFormatException) { showToast("Hex格式错误"); return }
+            // 统一以字节的文本解码作为 display，由 appendOutput 根据 outputShowHex 决定最终格式
+            val displayStr = bytes.decodeToString()
             appendOutput(displayStr)
-            sendEditText.setText("")
             // 统一通过 DataTransceiver 接口发送，由接口根据当前连接方式分发
             Thread {
                 try {

@@ -31,7 +31,9 @@ data class PanelConfig(
     var outputUseGbk: Boolean = false,
     // ── 发送区工具栏 ──
     var sendHexMode: Boolean = false,
-    var sendLineEndingSelection: Int = 1
+    var sendLineEndingSelection: Int = 1,
+    // ── 发送缓冲区 ──
+    var sendBufferText: String = ""
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("plotWeight", plotWeight.toDouble())
@@ -56,6 +58,7 @@ data class PanelConfig(
         put("outputUseGbk", outputUseGbk)
         put("sendHexMode", sendHexMode)
         put("sendLineEndingSelection", sendLineEndingSelection)
+        put("sendBufferText", sendBufferText)
     }
 
     companion object {
@@ -83,6 +86,7 @@ data class PanelConfig(
                 outputUseGbk = it.optBoolean("outputUseGbk", false)
                 sendHexMode = it.optBoolean("sendHexMode", false)
                 sendLineEndingSelection = it.optInt("sendLineEndingSelection", 1)
+                sendBufferText = it.optString("sendBufferText", "")
             }
         }
     }
