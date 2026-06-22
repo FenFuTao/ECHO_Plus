@@ -67,7 +67,7 @@
     <string name="settings_ui_size">界面尺寸</string>
     <string name="settings_option_narrow">窄（适合手机）</string>
     <string name="settings_option_wide">宽（适合平板）</string>
-    <string name="settings_tcp_timeout">TCP连接超时</string>
+    <string name="settings_tcp_timeout">TCP超时时间</string>
     <string name="settings_tcp_timeout_unit">秒</string>
     <string name="tcp_server_conn_empty">无设备连接</string>
     <string name="serial_config_title">串口参数配置</string>
@@ -78,4 +78,7 @@
     <string name="serial_data_bits">数据位数</string>
     <string name="serial_stop_bits">停止位数</string>
     <string name="serial_flow_signal">流控信号</string>
+    <string name="settings_reset">恢复默认配置</string>
+    <string name="settings_reset_confirm">确认</string>
+    <string name="settings_reset_cancel">取消</string>
 </resources>

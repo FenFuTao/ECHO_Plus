@@ -31,6 +31,7 @@ class TcpServerManager {
         fun onDataReceived(data: String)
     }
 
+    @Volatile
     private var serverSocket: ServerSocket? = null
     private val clientSockets = CopyOnWriteArrayList<Socket>()
     @Volatile
@@ -230,8 +231,9 @@ class TcpServerManager {
         serverExecutor.submit {
             for (socket in clientSockets) {
                 try {
-                    socket.getOutputStream().write(data)
-                    socket.getOutputStream().flush()
+                    val os = socket.getOutputStream()
+                    os.write(data)
+                    os.flush()
                 } catch (_: IOException) {}
             }
         }

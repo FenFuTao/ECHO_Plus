@@ -731,6 +731,7 @@ class MainActivity : AppCompatActivity() {
             settingsView = layoutInflater.inflate(R.layout.page_settings, null)
             setupSettingsSpinner()
             setupTcpTimeoutField()
+            setupSettingsResetButton()
         }
 
         highlightMenuBarButton(R.id.menuBarSetting)
@@ -855,6 +856,46 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+    }
+
+    private fun setupSettingsResetButton() {
+        val row = settingsView?.findViewById<View>(R.id.settingsResetRow) ?: return
+
+        row.setOnClickListener {
+            val dialog = AlertDialog.Builder(this@MainActivity)
+                .setTitle("恢复默认配置")
+                .setMessage("确定将所有配置恢复为出厂默认值吗？")
+                .setNegativeButton("确认") { _, _ ->
+                    val oldBarDp = panelConfig.menuBarWidthDp
+                    panelConfig.resetToDefault()
+                    ConfigManager.saveConfig(panelConfig)
+
+                    if (panelConfig.menuBarWidthDp != oldBarDp) {
+                        val label = if (panelConfig.menuBarWidthDp >= 56) "宽（适合平板）" else "窄（适合手机）"
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("配置已重置")
+                            .setMessage("配置已恢复为出厂默认值，菜单栏宽度已设置为「$label」。\n是否立即重启应用以应用新的DPI适配？\n\n若不重启，配置将保存到文件，在下次手动重启后生效。")
+                            .setPositiveButton("立即重启") { _, _ ->
+                                restartApp()
+                            }
+                            .setNegativeButton("稍后重启") { _, _ ->
+                                Toast.makeText(this@MainActivity, "配置已重置，重启后生效", Toast.LENGTH_SHORT).show()
+                            }
+                            .setCancelable(false)
+                            .show()
+                    } else {
+                        Toast.makeText(this@MainActivity, "配置已重置为出厂默认值", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                .setPositiveButton("取消", null)
+                .create()
+            dialog.setOnShowListener {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(
+                    android.graphics.Color.parseColor("#9E9E9E")
+                )
+            }
+            dialog.show()
         }
     }
 
@@ -1299,11 +1340,24 @@ class MainActivity : AppCompatActivity() {
             // 统一以字节的文本解码作为 display，由 appendOutput 根据 outputShowHex 决定最终格式
             val displayStr = bytes.decodeToString()
             appendOutput(displayStr, true)
+            // 根据行尾选项，在发送数据末尾追加行尾符
+            val lineEndingBytes: ByteArray = when (panelConfig.sendLineEndingSelection) {
+                1 -> byteArrayOf(0x0A)       // \n
+                2 -> byteArrayOf(0x0D)       // \r
+                3 -> byteArrayOf(0x0A, 0x0D) // \n\r
+                4 -> byteArrayOf(0x0D, 0x0A) // \r\n
+                else -> ByteArray(0)          // 0: 无追加
+            }
+            val sendBytes = if (lineEndingBytes.isNotEmpty()) {
+                bytes + lineEndingBytes
+            } else {
+                bytes
+            }
             // 统一通过 DataTransceiver 接口发送，由接口根据当前连接方式分发
             Thread {
                 try {
                     if (currentTransceiver.isConnected()) {
-                        currentTransceiver.send(bytes)
+                        currentTransceiver.send(sendBytes)
                     }
                 } catch (_: Exception) { }
             }.start()
@@ -1387,7 +1441,7 @@ class MainActivity : AppCompatActivity() {
                     if (ip.isNullOrBlank()) { showToast("请输入服务器IP"); return }
                     val port = portStr?.toIntOrNull()
                     if (port == null || port !in 1..65535) { showToast("请输入有效端口 (1-65535)"); return }
-                    val hs = if (handshake.isNullOrBlank()) "plot0" else handshake
+                    val hs = handshake ?: ""
                     panelConfig.tcpClientServerIp = ip; panelConfig.tcpClientNetworkPort = portStr; panelConfig.tcpClientHandshake = hs; ConfigManager.saveConfig(panelConfig)
                     // 配置收发器参数并通过统一接口连接
                     tcpClientTransceiver.host = ip

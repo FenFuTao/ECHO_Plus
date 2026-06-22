@@ -26,7 +26,9 @@ class TcpClientManager {
     private var isConnected = false
     @Volatile
     private var isConnecting = false
+    @Volatile
     private var socket: Socket? = null
+    @Volatile
     private var outputStream: OutputStream? = null
     private var remoteHost: String = ""
     private var remotePort: Int = 0
@@ -50,9 +52,9 @@ class TcpClientManager {
      * 连接到 TCP 服务端
      * @param host 服务器 IP
      * @param port 端口
-     * @param handshake 握手数据，连接成功后发送
+     * @param handshake 握手数据，连接成功后发送（为空则不发送）
      */
-    fun connect(host: String, port: Int, handshake: String = "plot0", timeoutMs: Int = 10000): Boolean {
+    fun connect(host: String, port: Int, handshake: String = "", timeoutMs: Int = 10000): Boolean {
         if (isConnected) {
             AppLogger.w("TcpClientManager", "客户端已连接")
             return false
@@ -98,14 +100,16 @@ class TcpClientManager {
 
             AppLogger.i("TcpClientManager", "TCP客户端已连接到 $host:$port")
 
-            // 发送握手数据
-            val handshakeBytes = handshake.toByteArray(Charset.forName("UTF-8"))
-            try {
-                outputStream?.write(handshakeBytes)
-                outputStream?.flush()
-                AppLogger.i("TcpClientManager", "握手数据已发送: $handshake")
-            } catch (e: IOException) {
-                AppLogger.e("TcpClientManager", "发送握手数据失败: ${e.message}")
+            // 若握手数据不为空则发送
+            if (handshake.isNotEmpty()) {
+                val handshakeBytes = handshake.toByteArray(Charset.forName("UTF-8"))
+                try {
+                    outputStream?.write(handshakeBytes)
+                    outputStream?.flush()
+                    AppLogger.i("TcpClientManager", "握手数据已发送: $handshake")
+                } catch (e: IOException) {
+                    AppLogger.e("TcpClientManager", "发送握手数据失败: ${e.message}")
+                }
             }
 
             mainHandler.post {
@@ -211,6 +215,7 @@ class TcpClientManager {
     fun send(data: ByteArray) {
         Thread {
             try {
+                // @Volatile 保证 outputStream 的写入对当前线程立即可见
                 outputStream?.write(data)
                 outputStream?.flush()
             } catch (e: IOException) {

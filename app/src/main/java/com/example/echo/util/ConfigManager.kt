@@ -5,38 +5,106 @@ import org.json.JSONObject
 import java.io.File
 
 data class PanelConfig(
-    var plotWeight: Float = 1f,
-    var outputWeight: Float = 1f,
-    var leftPanelWeight: Float = 2f,
-    var rightPanelWeight: Float = 1f,
-    var uiScale: Float = 1.0f,
-    var menuBarWidthDp: Int = 40,
-    var primaryColorHex: String = "#FF2983BB",
-    var menuBarBgHex: String = "#FFBACCD9",
+    var plotWeight: Float = 0f,
+    var outputWeight: Float = 0f,
+    var leftPanelWeight: Float = 0f,
+    var rightPanelWeight: Float = 0f,
+    var uiScale: Float = 0f,
+    var menuBarWidthDp: Int = 0,
+    var primaryColorHex: String = "",
+    var menuBarBgHex: String = "",
     // ── 数据引擎与数据接口选择 ──
     var dataEngineSelection: Int = 0,
     var protocolSelection: Int = 0,
     // ── TCP 客户端参数 ──
     var tcpClientServerIp: String = "",
     var tcpClientNetworkPort: String = "",
-    var tcpClientHandshake: String = "plot0",
-    var tcpClientTimeoutSeconds: Int = 10,
+    var tcpClientHandshake: String = "",
+    var tcpClientTimeoutSeconds: Int = 0,
     // ── TCP 服务端参数 ──
     var tcpServerListenPort: String = "",
     var tcpServerHandshake: String = "",
     // ── 接收区工具栏 ──
     var outputShowHex: Boolean = false,
     var outputShowTimestamp: Boolean = false,
-    var outputRxHighlight: Boolean = true,
-    var outputTxHighlight: Boolean = true,
-    var outputFontSize: Float = 11f,
+    var outputRxHighlight: Boolean = false,
+    var outputTxHighlight: Boolean = false,
+    var outputFontSize: Float = 0f,
     var outputUseGbk: Boolean = false,
     // ── 发送区工具栏 ──
     var sendHexMode: Boolean = false,
-    var sendLineEndingSelection: Int = 1,
+    var sendLineEndingSelection: Int = 0,
     // ── 发送缓冲区 ──
     var sendBufferText: String = ""
 ) {
+    /** 将所有字段重置为出厂默认值（来自 DefaultConfig） */
+    fun resetToDefault() {
+        val def = DefaultConfig.createDefault()
+        plotWeight = def.plotWeight
+        outputWeight = def.outputWeight
+        leftPanelWeight = def.leftPanelWeight
+        rightPanelWeight = def.rightPanelWeight
+        uiScale = def.uiScale
+        menuBarWidthDp = def.menuBarWidthDp
+        primaryColorHex = def.primaryColorHex
+        menuBarBgHex = def.menuBarBgHex
+        dataEngineSelection = def.dataEngineSelection
+        protocolSelection = def.protocolSelection
+        tcpClientServerIp = def.tcpClientServerIp
+        tcpClientNetworkPort = def.tcpClientNetworkPort
+        tcpClientHandshake = def.tcpClientHandshake
+        tcpClientTimeoutSeconds = def.tcpClientTimeoutSeconds
+        tcpServerListenPort = def.tcpServerListenPort
+        tcpServerHandshake = def.tcpServerHandshake
+        outputShowHex = def.outputShowHex
+        outputShowTimestamp = def.outputShowTimestamp
+        outputRxHighlight = def.outputRxHighlight
+        outputTxHighlight = def.outputTxHighlight
+        outputFontSize = def.outputFontSize
+        outputUseGbk = def.outputUseGbk
+        sendHexMode = def.sendHexMode
+        sendLineEndingSelection = def.sendLineEndingSelection
+        sendBufferText = def.sendBufferText
+    }
+
+    companion object {
+        /** 出厂默认配置（参见 DefaultConfig.kt） */
+        private val default: PanelConfig by lazy { DefaultConfig.createDefault() }
+
+        fun fromJson(obj: JSONObject?): PanelConfig {
+            val d = default
+            return PanelConfig().apply {
+                obj?.let {
+                    plotWeight = it.optDouble("plotWeight", d.plotWeight.toDouble()).toFloat()
+                    outputWeight = it.optDouble("outputWeight", d.outputWeight.toDouble()).toFloat()
+                    leftPanelWeight = it.optDouble("leftPanelWeight", d.leftPanelWeight.toDouble()).toFloat()
+                    rightPanelWeight = it.optDouble("rightPanelWeight", d.rightPanelWeight.toDouble()).toFloat()
+                    uiScale = it.optDouble("uiScale", d.uiScale.toDouble()).toFloat()
+                    menuBarWidthDp = it.optInt("menuBarWidthDp", d.menuBarWidthDp)
+                    primaryColorHex = it.optString("primaryColorHex", d.primaryColorHex)
+                    menuBarBgHex = it.optString("menuBarBgHex", d.menuBarBgHex)
+                    dataEngineSelection = it.optInt("dataEngineSelection", d.dataEngineSelection)
+                    protocolSelection = it.optInt("protocolSelection", d.protocolSelection)
+                    tcpClientServerIp = it.optString("tcpClientServerIp", d.tcpClientServerIp)
+                    tcpClientNetworkPort = it.optString("tcpClientNetworkPort", d.tcpClientNetworkPort)
+                    tcpClientHandshake = it.optString("tcpClientHandshake", d.tcpClientHandshake)
+                    tcpClientTimeoutSeconds = it.optInt("tcpClientTimeoutSeconds", d.tcpClientTimeoutSeconds)
+                    tcpServerListenPort = it.optString("tcpServerListenPort", d.tcpServerListenPort)
+                    tcpServerHandshake = it.optString("tcpServerHandshake", d.tcpServerHandshake)
+                    outputShowHex = it.optBoolean("outputShowHex", d.outputShowHex)
+                    outputShowTimestamp = it.optBoolean("outputShowTimestamp", d.outputShowTimestamp)
+                    outputRxHighlight = it.optBoolean("outputRxHighlight", d.outputRxHighlight)
+                    outputTxHighlight = it.optBoolean("outputTxHighlight", d.outputTxHighlight)
+                    outputFontSize = it.optDouble("outputFontSize", d.outputFontSize.toDouble()).toFloat()
+                    outputUseGbk = it.optBoolean("outputUseGbk", d.outputUseGbk)
+                    sendHexMode = it.optBoolean("sendHexMode", d.sendHexMode)
+                    sendLineEndingSelection = it.optInt("sendLineEndingSelection", d.sendLineEndingSelection)
+                    sendBufferText = it.optString("sendBufferText", d.sendBufferText)
+                }
+            }
+        }
+    }
+
     fun toJson(): JSONObject = JSONObject().apply {
         put("plotWeight", plotWeight.toDouble())
         put("outputWeight", outputWeight.toDouble())
@@ -64,38 +132,6 @@ data class PanelConfig(
         put("sendLineEndingSelection", sendLineEndingSelection)
         put("sendBufferText", sendBufferText)
     }
-
-    companion object {
-        fun fromJson(obj: JSONObject?): PanelConfig = PanelConfig().apply {
-            obj?.let {
-                plotWeight = it.optDouble("plotWeight", 1.0).toFloat()
-                outputWeight = it.optDouble("outputWeight", 1.0).toFloat()
-                leftPanelWeight = it.optDouble("leftPanelWeight", 2.0).toFloat()
-                rightPanelWeight = it.optDouble("rightPanelWeight", 1.0).toFloat()
-                uiScale = it.optDouble("uiScale", 1.0).toFloat()
-                menuBarWidthDp = it.optInt("menuBarWidthDp", 40)
-                primaryColorHex = it.optString("primaryColorHex", "#FF2983BB")
-                menuBarBgHex = it.optString("menuBarBgHex", "#FFBACCD9")
-                dataEngineSelection = it.optInt("dataEngineSelection", 0)
-                protocolSelection = it.optInt("protocolSelection", 0)
-                tcpClientServerIp = it.optString("tcpClientServerIp", "")
-                tcpClientNetworkPort = it.optString("tcpClientNetworkPort", "")
-                tcpClientHandshake = it.optString("tcpClientHandshake", "plot0")
-                tcpClientTimeoutSeconds = it.optInt("tcpClientTimeoutSeconds", 10)
-                tcpServerListenPort = it.optString("tcpServerListenPort", "")
-                tcpServerHandshake = it.optString("tcpServerHandshake", "")
-                outputShowHex = it.optBoolean("outputShowHex", false)
-                outputShowTimestamp = it.optBoolean("outputShowTimestamp", false)
-                outputRxHighlight = it.optBoolean("outputRxHighlight", true)
-                outputTxHighlight = it.optBoolean("outputTxHighlight", true)
-                outputFontSize = it.optDouble("outputFontSize", 11.0).toFloat()
-                outputUseGbk = it.optBoolean("outputUseGbk", false)
-                sendHexMode = it.optBoolean("sendHexMode", false)
-                sendLineEndingSelection = it.optInt("sendLineEndingSelection", 1)
-                sendBufferText = it.optString("sendBufferText", "")
-            }
-        }
-    }
 }
 
 object ConfigManager {
@@ -111,9 +147,10 @@ object ConfigManager {
 
     fun loadConfig(): PanelConfig {
         cachedConfig?.let { return it }
-        val file = getConfigFile() ?: return PanelConfig()
+        val file = getConfigFile() ?: return DefaultConfig.createDefault()
         if (!file.exists()) {
-            cachedConfig = PanelConfig()
+            val defaultCfg = DefaultConfig.createDefault()
+            cachedConfig = defaultCfg
             saveConfig(cachedConfig!!)
             return cachedConfig!!
         }
@@ -121,7 +158,8 @@ object ConfigManager {
             val json = JSONObject(file.readText(Charsets.UTF_8))
             PanelConfig.fromJson(json).also { cachedConfig = it }
         } catch (e: Exception) {
-            AppLogger.e("ConfigManager", errMsg(e)); PanelConfig().also { cachedConfig = it }
+            AppLogger.e("ConfigManager", errMsg(e))
+            DefaultConfig.createDefault().also { cachedConfig = it }
         }
     }
 

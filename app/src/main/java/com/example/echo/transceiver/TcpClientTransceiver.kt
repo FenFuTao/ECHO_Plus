@@ -18,7 +18,7 @@ class TcpClientTransceiver : DataTransceiver {
     // ── 连接参数 ──
     var host: String = ""
     var port: Int = 0
-    var handshake: String = "plot0"
+    var handshake: String = ""
     var timeoutMs: Int = 10000
 
     init {
