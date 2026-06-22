@@ -165,15 +165,10 @@ class TcpClientManager {
                 // UTF-8 解码收到的数据
                 val chunk = String(buf, 0, len, Charsets.UTF_8)
                 sb.append(chunk)
-                // 检查是否有完整的行（含换行符）
-                val str = sb.toString()
-                val idx = str.indexOf('\n')
-                if (idx >= 0) {
-                    val complete = str.substring(0, idx)
-                    sb.setLength(0)
-                    sb.append(str.substring(idx + 1))
+                // 提取所有完整行，剩余部分留在缓冲区
+                extractAndEmitLines(sb) { line ->
                     mainHandler.post {
-                        dataListener?.onDataReceived(complete)
+                        dataListener?.onDataReceived(line)
                     }
                 }
             }
@@ -222,5 +217,36 @@ class TcpClientManager {
                 AppLogger.e("TcpClientManager", "发送数据失败: ${e.message}")
             }
         }.start()
+    }
+
+    companion object {
+        /**
+         * 从 StringBuilder 中提取所有完整的行，将剩余不完整数据留在缓冲区。
+         * \n、\r\n、\n\r 均视为行终止符（\r\n 和 \n\r 算一个换行符）。
+         */
+        fun extractAndEmitLines(sb: StringBuilder, onLine: (String) -> Unit) {
+            val str = sb.toString()
+            if (str.isEmpty()) return
+
+            var lastCut = 0
+            var i = 0
+            while (i < str.length) {
+                val c = str[i]
+                if (c == '\n' || c == '\r') {
+                    val isDouble = (c == '\r' && i + 1 < str.length && str[i + 1] == '\n') ||
+                                   (c == '\n' && i + 1 < str.length && str[i + 1] == '\r')
+                    val lineEnd = i
+                    i = if (isDouble) i + 2 else i + 1
+                    onLine(str.substring(lastCut, lineEnd))
+                    lastCut = i
+                } else {
+                    i++
+                }
+            }
+            if (lastCut > 0) {
+                sb.setLength(0)
+                sb.append(str.substring(lastCut))
+            }
+        }
     }
 }

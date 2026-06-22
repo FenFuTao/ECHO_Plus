@@ -169,34 +169,28 @@ class TcpServerManager {
                 }
 
                 sb.append(chunk)
-                val str = sb.toString()
-                val idx = str.indexOf('\n')
-                if (idx >= 0) {
-                    val complete = str.substring(0, idx)
-                    sb.setLength(0)
-                    sb.append(str.substring(idx + 1))
-
-                    if (!handshakeSkipped && handshake.isNotEmpty()) {
-                        // 第一次收到完整行时，检查是否匹配握手数据
-                        if (complete == handshake) {
+                // 提取所有完整行，逐行处理（含握手过滤）
+                TcpClientManager.extractAndEmitLines(sb) { line ->
+                    val shouldSkip = if (!handshakeSkipped && handshake.isNotEmpty()) {
+                        if (line == handshake) {
                             handshakeSkipped = true
-                            continue  // 跳过，不进入回调
-                        }
-                        // 握手数据没有 \n 被追加到首个完整行前，截断前缀
-                        if (complete.startsWith(handshake)) {
-                            val remainder = complete.substring(handshake.length)
+                            true
+                        } else if (line.startsWith(handshake)) {
                             handshakeSkipped = true
+                            val remainder = line.substring(handshake.length)
                             if (remainder.isNotEmpty()) {
-                                mainHandler.post {
-                                    dataListener?.onDataReceived(remainder)
-                                }
+                                mainHandler.post { dataListener?.onDataReceived(remainder) }
                             }
-                            continue
+                            true
+                        } else {
+                            false
                         }
+                    } else {
+                        false
                     }
-                    handshakeSkipped = true
-                    mainHandler.post {
-                        dataListener?.onDataReceived(complete)
+                    if (!shouldSkip) {
+                        handshakeSkipped = true
+                        mainHandler.post { dataListener?.onDataReceived(line) }
                     }
                 }
             }

@@ -1225,24 +1225,11 @@ class MainActivity : AppCompatActivity() {
                     }
                     panelConfig.sendBufferText = pure
                 } else {
-                    // Abc 模式：将用户输入的字符转换为 hex 核心格式
+                    // Abc 模式：解析转义序列后转换为 hex 核心格式
                     val rawText = s.toString()
-                    val hexStr = rawText.toByteArray(kotlin.text.Charsets.UTF_8).joinToString("") { String.format("%02X", it) }
+                    val bytes = parseEscapeText(rawText)
+                    val hexStr = bytes.joinToString("") { String.format("%02X", it) }
                     panelConfig.sendBufferText = hexStr
-                    // 不可打印字符显示为空格
-                    val displaySb = StringBuilder()
-                    for (ch in rawText) {
-                        val b = ch.code
-                        if (b in 0x20..0x7E) displaySb.append(ch) else displaySb.append(' ')
-                    }
-                    val displayText = displaySb.toString()
-                    if (displayText != s.toString()) {
-                        isUpdating = true
-                        val cursor = sendEditText.selectionStart
-                        s.replace(0, s.length, displayText)
-                        sendEditText.setSelection(cursor.coerceAtMost(displayText.length))
-                        isUpdating = false
-                    }
                 }
                 ConfigManager.saveConfig(panelConfig)
             }
@@ -1308,20 +1295,60 @@ class MainActivity : AppCompatActivity() {
         textWatcherSuspended = false
     }
 
-    /** Hex → Abc：将 Hex 解析为字节，不可打印字符显示为空格 */
+    /** 解析文本中的转义序列（如 \r \n \t \\ \0），返回实际字节 */
+    private fun parseEscapeText(text: String): ByteArray {
+        val bytes = mutableListOf<Byte>()
+        var i = 0
+        while (i < text.length) {
+            val c = text[i]
+            if (c == '\\' && i + 1 < text.length) {
+                when (text[i + 1]) {
+                    'n'  -> { bytes.add(0x0A); i += 2 }
+                    'r'  -> { bytes.add(0x0D); i += 2 }
+                    't'  -> { bytes.add(0x09); i += 2 }
+                    '0'  -> { bytes.add(0x00); i += 2 }
+                    '\\' -> { bytes.add(0x5C); i += 2 }
+                    '\'' -> { bytes.add(0x27); i += 2 }
+                    '"'  -> { bytes.add(0x22); i += 2 }
+                    else -> { bytes.add(c.code.toByte()); i++ }
+                }
+            } else {
+                bytes.add(c.code.toByte())
+                i++
+            }
+        }
+        return bytes.toByteArray()
+    }
+
+    /** 将字节转换为带转义序列的显示文本 */
+    private fun toEscapeDisplay(data: ByteArray): String {
+        val sb = StringBuilder()
+        for (b in data) {
+            val v = b.toInt() and 0xFF
+            when (v) {
+                0x0A -> sb.append("\\n")
+                0x0D -> sb.append("\\r")
+                0x09 -> sb.append("\\t")
+                0x00 -> sb.append("\\0")
+                0x5C -> sb.append("\\\\")
+                in 0x20..0x7E -> sb.append(v.toChar())
+                else -> sb.append(' ')
+            }
+        }
+        return sb.toString()
+    }
+
+    /** Hex → Abc：将 Hex 解析为字节，控制字符显示为转义序列 */
     private fun hexToAscii(hexStr: String) {
         try {
             val pure = hexStr.filter { c -> c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F' }
             if (pure.isEmpty()) return
             val adjusted = if (pure.length % 2 != 0) pure + "0" else pure
-            val sb = StringBuilder()
-            for (i in adjusted.indices step 2) {
-                val byteVal = adjusted.substring(i, i + 2).toInt(16)
-                if (byteVal in 0x20..0x7E) sb.append(byteVal.toChar()) else sb.append(' ')
-            }
+            val bytes = adjusted.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            val display = toEscapeDisplay(bytes)
             textWatcherSuspended = true
-            sendEditText.setText(sb.toString())
-            sendEditText.setSelection(sb.length)
+            sendEditText.setText(display)
+            sendEditText.setSelection(display.length)
             textWatcherSuspended = false
         } catch (_: Exception) {
             // 解析失败时不做任何操作，保持原内容
