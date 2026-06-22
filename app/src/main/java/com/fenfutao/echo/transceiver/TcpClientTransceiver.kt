@@ -13,6 +13,7 @@ class TcpClientTransceiver : DataTransceiver {
 
     private val manager = TcpClientManager()
     private var dataListener: ((String) -> Unit)? = null
+    private var rawDataListener: ((ByteArray) -> Unit)? = null
     private var stateListener: ((Boolean, String) -> Unit)? = null
 
     // ── 连接参数 ──
@@ -25,6 +26,9 @@ class TcpClientTransceiver : DataTransceiver {
         // 将 Manager 的回调桥接到统一接口的回调
         manager.setOnDataReceivedListener(TcpClientManager.OnDataReceivedListener { data ->
             dataListener?.invoke(data)
+        })
+        manager.setOnRawDataReceivedListener(TcpClientManager.OnRawDataReceivedListener { data ->
+            rawDataListener?.invoke(data)
         })
         manager.setOnConnectionStateListener(TcpClientManager.OnConnectionStateListener { connected, message ->
             stateListener?.invoke(connected, message)
@@ -44,6 +48,7 @@ class TcpClientTransceiver : DataTransceiver {
     }
 
     override fun disconnect() {
+        rawDataListener = null
         manager.disconnect()
     }
 
@@ -54,6 +59,10 @@ class TcpClientTransceiver : DataTransceiver {
 
     override fun setOnDataReceivedListener(listener: ((String) -> Unit)?) {
         dataListener = listener
+    }
+
+    override fun setOnRawDataReceivedListener(listener: ((ByteArray) -> Unit)?) {
+        rawDataListener = listener
     }
 
     override fun setOnStateChangedListener(listener: ((Boolean, String) -> Unit)?) {

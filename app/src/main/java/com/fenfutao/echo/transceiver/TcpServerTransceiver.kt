@@ -13,6 +13,7 @@ class TcpServerTransceiver : DataTransceiver {
 
     private val manager = TcpServerManager()
     private var dataListener: ((String) -> Unit)? = null
+    private var rawDataListener: ((ByteArray) -> Unit)? = null
     private var stateListener: ((Boolean, String) -> Unit)? = null
 
     // ── 连接参数 ──
@@ -39,6 +40,9 @@ class TcpServerTransceiver : DataTransceiver {
         manager.setOnDataReceivedListener(TcpServerManager.OnDataReceivedListener { data ->
             dataListener?.invoke(data)
         })
+        manager.setOnRawDataReceivedListener(TcpServerManager.OnRawDataReceivedListener { data, _ ->
+            rawDataListener?.invoke(data)
+        })
         manager.setOnServerStateChangeListener(TcpServerManager.OnServerStateChangeListener { running, message ->
             stateListener?.invoke(running, message)
         })
@@ -64,6 +68,7 @@ class TcpServerTransceiver : DataTransceiver {
     }
 
     override fun disconnect() {
+        rawDataListener = null
         manager.stop()
     }
 
@@ -71,6 +76,10 @@ class TcpServerTransceiver : DataTransceiver {
 
     override fun setOnDataReceivedListener(listener: ((String) -> Unit)?) {
         dataListener = listener
+    }
+
+    override fun setOnRawDataReceivedListener(listener: ((ByteArray) -> Unit)?) {
+        rawDataListener = listener
     }
 
     override fun setOnStateChangedListener(listener: ((Boolean, String) -> Unit)?) {

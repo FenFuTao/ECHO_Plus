@@ -13,6 +13,7 @@ class UdpTransceiver : DataTransceiver {
 
     private val manager = UdpManager()
     private var dataListener: ((String) -> Unit)? = null
+    private var rawDataListener: ((ByteArray) -> Unit)? = null
     private var stateListener: ((Boolean, String) -> Unit)? = null
 
     // ── 连接参数 ──
@@ -24,6 +25,9 @@ class UdpTransceiver : DataTransceiver {
         // 将 Manager 的回调桥接到统一接口的回调
         manager.setOnDataReceivedListener(UdpManager.OnDataReceivedListener { data ->
             dataListener?.invoke(data)
+        })
+        manager.setOnRawDataReceivedListener(UdpManager.OnRawDataReceivedListener { data ->
+            rawDataListener?.invoke(data)
         })
         manager.setOnConnectionStateListener(UdpManager.OnConnectionStateListener { connected, message ->
             stateListener?.invoke(connected, message)
@@ -43,6 +47,7 @@ class UdpTransceiver : DataTransceiver {
     }
 
     override fun disconnect() {
+        rawDataListener = null
         manager.disconnect()
     }
 
@@ -53,6 +58,10 @@ class UdpTransceiver : DataTransceiver {
 
     override fun setOnDataReceivedListener(listener: ((String) -> Unit)?) {
         dataListener = listener
+    }
+
+    override fun setOnRawDataReceivedListener(listener: ((ByteArray) -> Unit)?) {
+        rawDataListener = listener
     }
 
     override fun setOnStateChangedListener(listener: ((Boolean, String) -> Unit)?) {

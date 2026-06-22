@@ -33,8 +33,11 @@ interface DataTransceiver {
     /** 当前是否已连接/运行中 */
     fun isConnected(): Boolean
 
-    /** 设置数据接收回调 */
+    /** 设置数据接收回调（字符串格式，适用于 FireWater） */
     fun setOnDataReceivedListener(listener: ((String) -> Unit)?)
+
+    /** 设置原始字节数据接收回调（供协议引擎使用） */
+    fun setOnRawDataReceivedListener(listener: ((ByteArray) -> Unit)?)
 
     /** 设置连接状态变化回调 */
     fun setOnStateChangedListener(listener: ((Boolean, String) -> Unit)?)

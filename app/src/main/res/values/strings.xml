@@ -28,6 +28,8 @@
     <string name="ctrl_btn4">控件四</string>
     <string name="conn_connect">连接设备</string>
     <string name="conn_disconnect">断开设备</string>
+    <string name="param_header_title">数据</string>
+    <string name="param_relearn">E</string>
     <string name="menu_bar_width">菜单栏宽度</string>
     <string name="bar_small">窄 (适合手机)</string>
     <string name="bar_large">宽 (适合平板)</string>
@@ -81,4 +83,6 @@
     <string name="settings_reset">恢复默认配置</string>
     <string name="settings_reset_confirm">确认</string>
     <string name="settings_reset_cancel">取消</string>
+    <string name="local_ip_title">本机IP地址</string>
+    <string name="local_ip_refresh">刷新</string>
 </resources>

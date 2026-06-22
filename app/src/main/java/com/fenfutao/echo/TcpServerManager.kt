@@ -31,6 +31,10 @@ class TcpServerManager {
         fun onDataReceived(data: String)
     }
 
+    fun interface OnRawDataReceivedListener {
+        fun onRawDataReceived(data: ByteArray, clientAddress: String)
+    }
+
     @Volatile
     private var serverSocket: ServerSocket? = null
     private val clientSockets = CopyOnWriteArrayList<Socket>()
@@ -42,6 +46,7 @@ class TcpServerManager {
     private var listListener: OnConnectionListChangeListener? = null
     private var stateListener: OnServerStateChangeListener? = null
     private var dataListener: OnDataReceivedListener? = null
+    private var rawDataListener: OnRawDataReceivedListener? = null
 
     /** 服务端握手数据，新客户端连接后若收到匹配此字符串的数据则过滤掉 */
     @Volatile
@@ -61,6 +66,10 @@ class TcpServerManager {
 
     fun setOnDataReceivedListener(listener: OnDataReceivedListener) {
         this.dataListener = listener
+    }
+
+    fun setOnRawDataReceivedListener(listener: OnRawDataReceivedListener) {
+        this.rawDataListener = listener
     }
 
     /** 获取当前所有已连接客户端的 IP 地址列表（按连接顺序） */
@@ -158,9 +167,15 @@ class TcpServerManager {
             val buf = ByteArray(1024)
             val sb = StringBuilder()
             var handshakeSkipped = false
+            val clientAddress = try {
+                "${client.inetAddress?.hostAddress ?: "未知"}:${client.port}"
+            } catch (_: Exception) { "未知" }
             while (isRunning && client.isConnected && !client.isClosed) {
                 val len = input.read(buf)
                 if (len < 0) break
+                // ★ 原始字节回调（供协议引擎使用），在 IO 线程直接回调避免主线程拥塞
+                val rawCopy = buf.copyOf(len)
+                rawDataListener?.onRawDataReceived(rawCopy, clientAddress)
                 val chunk = String(buf, 0, len, Charsets.UTF_8)
 
                 // 如果累积缓冲恰好等于握手数据（无 \n），清空缓冲继续
