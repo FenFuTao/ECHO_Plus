@@ -1,0 +1,249 @@
+package com.fenfutao.echo
+
+import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
+import android.view.MotionEvent
+import android.view.View
+import android.widget.ScrollView
+
+/**
+ * 带厚实可拖动滚动条的自定�?ScrollView
+ *
+ * 解决默认 ScrollView 滚动条太细、难拖动的问题�?
+ * - 8dp 宽的半透明滑块，带圆角
+ * - 支持触摸拖拽滑块
+ * - 支持点击轨道快速跳�?
+ * - 内容不满一屏时自动隐藏
+ */
+class OutputScrollView(context: Context) : ScrollView(context) {
+
+    private val thumbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#99CCCCCC")
+        style = Paint.Style.FILL
+    }
+
+    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#25CCCCCC")
+        style = Paint.Style.FILL
+    }
+
+    private val scrollBarWidth: Float
+    private val scrollBarMargin: Float
+    /** 点击/拖拽区域的宽度（比滚动条本身宽，方便触摸�?*/
+    private val scrollBarTouchWidth: Float
+    private val minThumbHeight: Float
+    private val cornerRadius: Float
+
+    private var isDraggingThumb = false
+    private var dragStartY = 0f
+    private var dragStartScrollY = 0f
+
+    /** 标记当前滚动是否由程序主动触发，防止误触�?onUserScrolledListener */
+    private var isProgrammaticScroll = false
+    /** 用户手动滚动回调 */
+    var onUserScrolledListener: (() -> Unit)? = null
+
+    init {
+        val density = resources.displayMetrics.density
+        scrollBarWidth = 6f * density   // 6dp
+        scrollBarMargin = 3f * density   // 3dp
+        scrollBarTouchWidth = 16f * density // 16dp 触摸区域，方便手指操�?
+        minThumbHeight = 30f * density   // 30dp
+        cornerRadius = 3f * density      // 3dp 圆角
+
+        // 禁用系统默认滚动条，完全使用自定义绘�?
+        isVerticalScrollBarEnabled = false
+        isScrollbarFadingEnabled = false
+        setWillNotDraw(false)
+    }
+
+    /**
+     * 供外部调用的程序化滚动到 y 位置，不会触�?[onUserScrolledListener]
+     * 内部通过 [smoothScrollTo] 实现，避免直接设�?mScrollY = y 导致的异常�?
+     */
+    fun programmaticScrollTo(x: Int, y: Int) {
+        isProgrammaticScroll = true
+        smoothScrollTo(x, y)
+    }
+
+    /**
+     * 供外部调用的程序�?fullScroll，不会触�?[onUserScrolledListener]
+     */
+    override fun fullScroll(direction: Int): Boolean {
+        isProgrammaticScroll = true
+        return super.fullScroll(direction)
+    }
+
+    /**
+     * 跳转到最底部并恢复自动滚动�?
+     * 使用 post + fullScroll(FOCUS_DOWN) 确保在布局完成后再滚动到底部，
+     * 避免因布局挂起导致 scrollRange 未更新而跳不到位�?
+     */
+    fun jumpToBottom() {
+        isProgrammaticScroll = true
+        // 使用 post 确保布局已完全更新后再计�?scrollRange
+        post {
+                // 重新标记 isProgrammaticScroll（post 中可能已被其他操作清除）
+                isProgrammaticScroll = true
+                super.fullScroll(View.FOCUS_DOWN)
+        }
+    }
+
+    override fun dispatchDraw(canvas: Canvas) {
+        super.dispatchDraw(canvas)
+        // View.draw() 在调�?dispatchDraw 前已�?canvas 平移�?(-scrollX, -scrollY)�?
+        // 因此直接绘制的滚动条会随着内容一起滚动（视觉上方向相反）�?
+        // 需要撤销这个平移，使滚动条固定在视图区域的右侧�?
+        canvas.save()
+        canvas.translate(scrollX.toFloat(), scrollY.toFloat())
+        drawScrollbar(canvas)
+        canvas.restore()
+    }
+
+    /**
+     * 在内容之上绘制自定义滚动�?
+     */
+    private fun drawScrollbar(canvas: Canvas) {
+        val contentHeight = computeVerticalScrollRange().toFloat()
+        val viewHeight = height.toFloat()
+        // 内容未超出视图范围时隐藏滚动�?
+        if (contentHeight <= viewHeight) return
+
+        val scrollY = scrollY.toFloat()
+        val thumbHeight = (viewHeight / contentHeight * viewHeight).coerceAtLeast(minThumbHeight)
+        val thumbAvailable = viewHeight - thumbHeight - scrollBarMargin * 2f
+        val scrollRange = contentHeight - viewHeight
+
+        val thumbTop: Float = if (scrollRange > 0f) {
+            (scrollY / scrollRange) * thumbAvailable + scrollBarMargin
+        } else {
+            scrollBarMargin
+        }
+
+        val right = width.toFloat() - scrollBarMargin
+        val left = right - scrollBarWidth
+        val trackTop = scrollBarMargin
+        val trackBottom = viewHeight - scrollBarMargin
+
+        // 绘制轨道背景
+        val trackRect = RectF(left, trackTop, right, trackBottom)
+        canvas.drawRoundRect(trackRect, cornerRadius, cornerRadius, trackPaint)
+
+        // 绘制滑块
+        val thumbRect = RectF(left, thumbTop, right, thumbTop + thumbHeight)
+        canvas.drawRoundRect(thumbRect, cornerRadius, cornerRadius, thumbPaint)
+    }
+
+    override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
+        super.onScrollChanged(l, t, oldl, oldt)
+        // 滚动时重绘自定义滚动�?
+        invalidate()
+
+        // 用户手动滚动且内容不在底部时触发回调
+        if (!isProgrammaticScroll) {
+            val contentHeight = computeVerticalScrollRange()
+            val atBottom = (t + height) >= contentHeight - 15
+            if (!atBottom) {
+                onUserScrolledListener?.invoke()
+            }
+        }
+        isProgrammaticScroll = false
+    }
+
+    /**
+     * 计算当前 thumb �?top 位置
+     */
+    private fun computeThumbTop(): Float {
+        val contentHeight = computeVerticalScrollRange().toFloat()
+        val viewHeight = height.toFloat()
+        if (contentHeight <= viewHeight) return scrollBarMargin
+
+        val thumbHeight = (viewHeight / contentHeight * viewHeight).coerceAtLeast(minThumbHeight)
+        val thumbAvailable = viewHeight - thumbHeight - scrollBarMargin * 2f
+        val scrollRange = contentHeight - viewHeight
+
+        return if (scrollRange > 0f) {
+            (scrollY.toFloat() / scrollRange) * thumbAvailable + scrollBarMargin
+        } else {
+            scrollBarMargin
+        }
+    }
+
+    override fun onTouchEvent(ev: MotionEvent): Boolean {
+        val contentHeight = computeVerticalScrollRange().toFloat()
+        val viewHeight = height.toFloat()
+        if (contentHeight <= viewHeight) return super.onTouchEvent(ev)
+
+        val thumbHeight = (viewHeight / contentHeight * viewHeight).coerceAtLeast(minThumbHeight)
+        val scrollRange = contentHeight - viewHeight
+        val x = ev.x
+        val y = ev.y
+
+        // 判断是否点击在滚动条触摸区域（右�?16dp 宽条�?
+        val inScrollBarArea = x >= (width.toFloat() - scrollBarTouchWidth)
+
+        when (ev.action) {
+            MotionEvent.ACTION_DOWN -> {
+                if (inScrollBarArea) {
+                    val currentThumbTop = computeThumbTop()
+                    if (y >= currentThumbTop && y <= currentThumbTop + thumbHeight) {
+                        // 点在滑块�?-> 开始拖拽，通知父容器停止自动滚�?
+                        isDraggingThumb = true
+                        parent.requestDisallowInterceptTouchEvent(true)
+                        dragStartY = y
+                        dragStartScrollY = scrollY.toFloat()
+                        onUserScrolledListener?.invoke()
+                        return true
+                    } else if (y >= scrollBarMargin && y <= viewHeight - scrollBarMargin) {
+                        // 点在轨道上（非滑块区域）-> 跳转，通知父容器停止自动滚�?
+                        onUserScrolledListener?.invoke()
+                        val thumbAvailable = viewHeight - thumbHeight - scrollBarMargin * 2f
+                        if (thumbAvailable > 0f) {
+                            val ratio = ((y - scrollBarMargin) / thumbAvailable)
+                                .coerceIn(0f, 1f)
+                            val targetScroll = (ratio * scrollRange).toInt()
+                            smoothScrollTo(0, targetScroll)
+                        }
+                        return true
+                    }
+                }
+                // 触摸内容区域，交�?ScrollView 默认处理
+                return super.onTouchEvent(ev)
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                if (isDraggingThumb) {
+                    val dy = y - dragStartY
+                    val thumbAvailable = viewHeight - thumbHeight - scrollBarMargin * 2f
+                    if (thumbAvailable > 0f && scrollRange > 0f) {
+                        val ratio = dy / thumbAvailable
+                        val newScroll = (dragStartScrollY + ratio * scrollRange).toInt()
+                            .coerceIn(0, scrollRange.toInt())
+                        // 使用 scrollTo（而非 super.scrollTo）以确保 ScrollView 内部状态同�?
+                        scrollTo(0, newScroll)
+                    }
+                    return true
+                }
+                return super.onTouchEvent(ev)
+            }
+
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (isDraggingThumb) {
+                    isDraggingThumb = false
+                    parent.requestDisallowInterceptTouchEvent(false)
+                    performClick()
+                    return true
+                }
+                return super.onTouchEvent(ev)
+            }
+        }
+        return super.onTouchEvent(ev)
+    }
+
+    override fun performClick(): Boolean {
+        return super.performClick()
+    }
+}

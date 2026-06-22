@@ -4,6 +4,9 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.util.TypedValue
 import android.view.MotionEvent
 import android.view.View
@@ -22,6 +25,7 @@ import android.widget.AdapterView
 import android.widget.TextView
 import android.content.Intent
 import android.net.Uri
+import android.widget.ScrollView
 import androidx.activity.OnBackPressedCallback
 import androidx.core.content.res.ResourcesCompat
 import androidx.appcompat.app.AlertDialog
@@ -36,6 +40,9 @@ import com.fenfutao.echo.util.ConfigManager
 import com.fenfutao.echo.util.PanelConfig
 import com.google.android.material.navigation.NavigationView
 import android.widget.EditText
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
@@ -61,6 +68,13 @@ class MainActivity : AppCompatActivity() {
     private var selectedProtocolPosition = -1
     private var backPressedTime = 0L
 
+    // ── 输出批量刷新优化 ──
+    private val outputHandler = Handler(Looper.getMainLooper())
+    private var outputFlushPending = false
+    /** 上次已刷新到 outputText 的条目数 */
+    private var lastDisplayedEntryCount = 0
+    private val outputFlushRunnable = Runnable { doFlushOutput() }
+
     // ── 统一数据收发接口：各协议封装为 DataTransceiver ──
     private val tcpClientTransceiver = TcpClientTransceiver()
     private val tcpServerTransceiver = TcpServerTransceiver()
@@ -72,6 +86,9 @@ class MainActivity : AppCompatActivity() {
     private var panelConfig = PanelConfig()
 
     private lateinit var outputText: android.widget.TextView
+    private lateinit var outputScrollView: OutputScrollView
+    private var autoScrollEnabled = true
+    private lateinit var scrollToBottomBtn: android.view.View
     private var outputShowHex: Boolean get() = panelConfig.outputShowHex; set(v) { panelConfig.outputShowHex = v; ConfigManager.saveConfig(panelConfig) }
     private var outputShowTimestamp: Boolean get() = panelConfig.outputShowTimestamp; set(v) { panelConfig.outputShowTimestamp = v; ConfigManager.saveConfig(panelConfig) }
     private var outputRxHighlight: Boolean get() = panelConfig.outputRxHighlight; set(v) { panelConfig.outputRxHighlight = v; ConfigManager.saveConfig(panelConfig) }
@@ -133,6 +150,10 @@ class MainActivity : AppCompatActivity() {
         private const val MIN_RIGHT_WIDTH_DP = 80
         /** 分割线拖拽刷新防抖间隔 (ms) */
         private const val LAYOUT_REFRESH_INTERVAL_MS = 16L // ~60fps
+        /** 输出窗口最大缓存条目数 */
+        private const val MAX_OUTPUT_ENTRIES = 10000
+        /** 输出刷新批处理间隔 (ms)，约 30fps */
+        private const val OUTPUT_FLUSH_INTERVAL_MS = 33L
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -1241,20 +1262,58 @@ class MainActivity : AppCompatActivity() {
         btnEncoding = makeBtn(if (outputUseGbk) "GBK" else "UTF-8", false, true).apply { setOnClickListener { outputUseGbk = !outputUseGbk; (btnEncoding as android.widget.TextView).text = if (outputUseGbk) "GBK" else "UTF-8" } }
         toolbar.addView(btnEncoding)
         toolbar.addView(makeSep())
-        btnClear = makeBtn("E", true, true).apply { setOnClickListener { outputDataEntries.clear(); outputText.text = "" } }
+        btnClear = makeBtn("E", true, true).apply { setOnClickListener { outputDataEntries.clear(); outputText.text = ""; lastDisplayedEntryCount = 0; autoScrollEnabled = true; scrollToBottomBtn.visibility = View.GONE; outputScrollView.invalidate() } }
         toolbar.addView(btnClear)
         root.addView(toolbar)
-        val scrollView = android.widget.ScrollView(this)
-        scrollView.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
-        scrollView.isVerticalScrollBarEnabled = true
+        // 用 FrameLayout 包裹 ScrollView 以便叠加跳底按钮
+        val scrollViewWrapper = FrameLayout(this)
+        scrollViewWrapper.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+
+        val scrollView = OutputScrollView(this)
+        scrollView.layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
         scrollView.setPadding(dpToPx(4), dpToPx(4), dpToPx(4), dpToPx(4))
+        // 保存引用以便在输出刷新时使用 invalidate()
+        outputScrollView = scrollView
+
         outputText = android.widget.TextView(this)
         outputText.layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT)
         outputText.textSize = outputFontSize
         outputText.setTextColor(android.graphics.Color.parseColor("#E0E0E0"))
         outputText.setLineSpacing(2f, 1f)
         outputText.typeface = ResourcesCompat.getFont(this, R.font.maple_mono)
-        scrollView.addView(outputText); root.addView(scrollView)
+        scrollView.addView(outputText)
+
+        // 跳底按钮（仅用户手动滚动后显示）
+        scrollToBottomBtn = android.widget.TextView(this).apply {
+            text = "↓"
+            textSize = 18f
+            gravity = android.view.Gravity.CENTER
+            setTextColor(android.graphics.Color.parseColor("#E0E0E0"))
+            setBackgroundDrawable(android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setSize(dpToPx(40), dpToPx(40))
+                setColor(android.graphics.Color.parseColor("#CC333333"))
+            })
+            layoutParams = FrameLayout.LayoutParams(dpToPx(40), dpToPx(40)).apply {
+                gravity = android.view.Gravity.BOTTOM or android.view.Gravity.END
+                marginEnd = dpToPx(12)
+                bottomMargin = dpToPx(12)
+            }
+            visibility = View.GONE
+            setOnClickListener {
+                scrollToLatestAndResume()
+            }
+        }
+        scrollViewWrapper.addView(scrollView)
+        scrollViewWrapper.addView(scrollToBottomBtn)
+
+        // 监听用户手动滚动 → 停止自动滚动，显示跳底按钮
+        scrollView.onUserScrolledListener = {
+            autoScrollEnabled = false
+            scrollToBottomBtn.visibility = View.VISIBLE
+        }
+
+        root.addView(scrollViewWrapper)
 
         // 发送条
         val sendBarH = dpToPx(40)
@@ -1483,55 +1542,183 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun appendOutput(data: String, isTx: Boolean) {
+        // 跳过空内容行（如连续换行符产生的空行）
+        if (data.isEmpty()) return
         val cleaned = data.replace("\r\n", "\n").replace("\r", "\n")
+        // 清理后可能变成空字符串（如仅有 \r 的数据）
+        if (cleaned.isEmpty()) return
         val ts = if (outputShowTimestamp) System.currentTimeMillis() else null
         // visible 由追加时的开关决定：Rx 受 outputRxHighlight 控制，Tx 受 outputTxHighlight 控制
         val visible = if (isTx) outputTxHighlight else outputRxHighlight
-        outputDataEntries.add(OutputEntry(cleaned, ts, isTx, visible))
-        refreshOutputDisplay()
+        synchronized(outputDataEntries) {
+            outputDataEntries.add(OutputEntry(cleaned, ts, isTx, visible))
+            // 限制最大条目数，防止无限增长导致内存溢出
+            while (outputDataEntries.size > MAX_OUTPUT_ENTRIES) {
+                outputDataEntries.removeAt(0)
+            }
+        }
+        // 不再立即刷新 UI，改为调度批量刷新
+        scheduleOutputFlush()
     }
 
-    /** 根据当前设置重新构建输出显示，仅渲染 visible=true 的条目 */
-    private fun refreshOutputDisplay() {
+    /**
+     * 调度批量刷新，防抖合并多次 appendOutput 调用
+     */
+    private fun scheduleOutputFlush() {
+        if (!outputFlushPending) {
+            outputFlushPending = true
+            outputHandler.postDelayed(outputFlushRunnable, OUTPUT_FLUSH_INTERVAL_MS)
+        }
+    }
+
+    /**
+     * 执行批量刷新 — 增量追加新条目到 outputText，不再全量重建
+     * 仅在 main thread 上调用（通过 Handler）
+     */
+    private fun doFlushOutput() {
+        outputFlushPending = false
         val rxColor = android.graphics.Color.parseColor("#4FC3F7")
         val txColor = android.graphics.Color.parseColor("#FFB74D")
         val timestampColor = android.graphics.Color.parseColor("#9E9E9E")
 
-        val spannable = android.text.SpannableStringBuilder()
-        var firstVisible = true
-        for (entry in outputDataEntries) {
-            if (!entry.visible) continue
-            if (!firstVisible) spannable.append("\n")
-            firstVisible = false
-            val lineStart = spannable.length
+        val newSpannable = SpannableStringBuilder()
+        var hasNew = false
+        var needsClear = false
+        // 记录现有文本是否非空，用于判断是否需要前置换行
+        val existingTextNonEmpty = outputText.text.isNotEmpty()
 
-            // 时间戳：有记录则始终显示
-            if (entry.timestampMs != null) {
-                val ts = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date(entry.timestampMs))
-                val tsStr = "[$ts] "
-                spannable.append(tsStr)
-                spannable.setSpan(android.text.style.ForegroundColorSpan(timestampColor),
-                    lineStart, spannable.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        synchronized(outputDataEntries) {
+            // 若因条目被裁剪导致索引越界，触发全量重建
+            if (lastDisplayedEntryCount > outputDataEntries.size) {
+                lastDisplayedEntryCount = 0
+                needsClear = true
             }
 
-            // 数据内容
-            val contentStr: String
-            if (outputShowHex) {
-                contentStr = entry.text.toByteArray(kotlin.text.Charsets.UTF_8).joinToString(" ") { String.format("%02X", it) }
+            if (lastDisplayedEntryCount >= outputDataEntries.size) {
+                if (!needsClear) return
             } else {
-                contentStr = entry.text
+                // 仅处理自上次刷新以来的新条目
+                for (i in lastDisplayedEntryCount until outputDataEntries.size) {
+                    val entry = outputDataEntries[i]
+                    if (!entry.visible) continue
+
+                    // 处理条目间的换行：
+                    // - 第一个可见条目：如果现有文本已有内容，需要前置 \n
+                    // - 后续可见条目：始终前置 \n
+                    if (!hasNew) {
+                        if (existingTextNonEmpty) {
+                            newSpannable.append("\n")
+                        }
+                    } else {
+                        newSpannable.append("\n")
+                    }
+                    hasNew = true
+
+                    val lineStart = newSpannable.length
+                    // 时间戳
+                    if (entry.timestampMs != null) {
+                        val ts = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date(entry.timestampMs))
+                        newSpannable.append("[$ts] ")
+                        newSpannable.setSpan(ForegroundColorSpan(timestampColor),
+                            lineStart, newSpannable.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    }
+                    // 数据内容
+                    val contentStr: String
+                    if (outputShowHex) {
+                        contentStr = entry.text.toByteArray(kotlin.text.Charsets.UTF_8).joinToString(" ") { String.format("%02X", it) }
+                    } else {
+                        contentStr = entry.text
+                    }
+                    val contentStart = newSpannable.length
+                    newSpannable.append(contentStr)
+                    newSpannable.setSpan(ForegroundColorSpan(if (entry.isTx) txColor else rxColor),
+                        contentStart, newSpannable.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                lastDisplayedEntryCount = outputDataEntries.size
             }
-            val contentStart = spannable.length
-            spannable.append(contentStr)
-            val contentColor = if (entry.isTx) txColor else rxColor
-            spannable.setSpan(android.text.style.ForegroundColorSpan(contentColor),
-                contentStart, spannable.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
-        outputText.post {
+
+        // UI 操作在同步块外执行
+        if (needsClear) {
+            outputText.text = ""
+            autoScrollEnabled = true
+            scrollToBottomBtn.visibility = View.GONE
+        }
+        if (hasNew) {
+            outputText.append(newSpannable)
+            // 自动滚动到底部（仅在用户未手动翻看历史时）
+            if (autoScrollEnabled) {
+                outputScrollView.fullScroll(android.view.View.FOCUS_DOWN)
+            }
+            outputScrollView.invalidate()
+        }
+    }
+
+    /**
+     * 全量重建输出显示 — 当设置（Hex/Abc、时间戳、Rx/Tx过滤）变化时调用
+     * 将 lastDisplayedEntryCount 置 0，由下次 doFlushOutput 触发全量重建
+     */
+    private fun refreshOutputDisplay() {
+        synchronized(outputDataEntries) {
+            lastDisplayedEntryCount = 0
+        }
+        // 取消待处理的增量刷新，立即调度一次全量刷新
+        outputHandler.removeCallbacks(outputFlushRunnable)
+        outputFlushPending = false
+        outputHandler.post {
+            val rxColor = android.graphics.Color.parseColor("#4FC3F7")
+            val txColor = android.graphics.Color.parseColor("#FFB74D")
+            val timestampColor = android.graphics.Color.parseColor("#9E9E9E")
+
+            val spannable = SpannableStringBuilder()
+            val entries: List<OutputEntry>
+            synchronized(outputDataEntries) {
+                entries = outputDataEntries.toList()
+                lastDisplayedEntryCount = outputDataEntries.size
+            }
+
+            var firstVisible = true
+            for (entry in entries) {
+                if (!entry.visible) continue
+                // 跳过空内容条目
+                if (entry.text.isEmpty()) continue
+                if (!firstVisible) spannable.append("\n")
+                firstVisible = false
+                val lineStart = spannable.length
+
+                // 时间戳
+                if (entry.timestampMs != null) {
+                    val ts = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date(entry.timestampMs))
+                    spannable.append("[$ts] ")
+                    spannable.setSpan(ForegroundColorSpan(timestampColor),
+                        lineStart, spannable.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+
+                // 数据内容
+                val contentStr: String
+                if (outputShowHex) {
+                    contentStr = entry.text.toByteArray(kotlin.text.Charsets.UTF_8).joinToString(" ") { String.format("%02X", it) }
+                } else {
+                    contentStr = entry.text
+                }
+                val contentStart = spannable.length
+                spannable.append(contentStr)
+                spannable.setSpan(ForegroundColorSpan(if (entry.isTx) txColor else rxColor),
+                    contentStart, spannable.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
             outputText.text = spannable
-            val parent = outputText.parent as? android.widget.ScrollView
-            parent?.post { parent.fullScroll(android.view.View.FOCUS_DOWN) }
+            if (autoScrollEnabled) {
+                outputScrollView.fullScroll(android.view.View.FOCUS_DOWN)
+            }
+            outputScrollView.invalidate()
         }
+    }
+
+    /** 跳转至最新行并恢复自动滚动 */
+    private fun scrollToLatestAndResume() {
+        autoScrollEnabled = true
+        scrollToBottomBtn.visibility = View.GONE
+        outputScrollView.jumpToBottom()
     }
 
     private fun getProtocolName(position: Int): String = when (position) { 0 -> "串口"; 1 -> "UDP"; 2 -> "TCP客户端"; 3 -> "TCP服务端"; 4 -> "Demo"; else -> "未知" }
