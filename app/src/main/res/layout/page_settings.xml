@@ -30,35 +30,41 @@
                 android:textStyle="bold" />
         </LinearLayout>
 
-        <!-- 界面尺寸 -->
-        <TextView
+        <!-- 界面尺寸（同一行：标签 + 下拉框） -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
             android:paddingStart="16dp"
             android:paddingEnd="16dp"
             android:paddingTop="8dp"
-            android:paddingBottom="4dp"
-            android:text="@string/settings_ui_size"
-            android:textColor="#757575"
-            android:textSize="13sp"
-            android:textStyle="bold" />
+            android:paddingBottom="2dp">
 
-        <!-- 界面尺寸下拉框 -->
-        <Spinner
-            android:id="@+id/settingsSpinner"
-            android:layout_width="match_parent"
-            android:layout_height="44dp"
-            android:layout_marginStart="12dp"
-            android:layout_marginEnd="12dp"
-            android:layout_marginTop="4dp"
-            android:layout_marginBottom="8dp"
-            android:background="@drawable/bg_spinner_item"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:popupBackground="@android:color/white"
-            android:dropDownVerticalOffset="2dp"
-            android:textSize="14sp"
-            android:textColor="#424242" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_ui_size"
+                android:textColor="#757575"
+                android:textSize="13sp" />
+
+            <Space
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <Spinner
+                android:id="@+id/settingsSpinner"
+                android:layout_width="140dp"
+                android:layout_height="30dp"
+                android:background="@drawable/bg_spinner_item"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:popupBackground="@android:color/white"
+                android:dropDownVerticalOffset="1dp"
+                android:textSize="13sp"
+                android:textColor="#424242" />
+        </LinearLayout>
 
         <!-- 分割线 -->
         <View
@@ -68,6 +74,61 @@
             android:layout_marginStart="16dp"
             android:layout_marginEnd="16dp"
             android:layout_marginTop="4dp"
+            android:layout_marginBottom="8dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="2dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_tcp_timeout"
+                android:textColor="#757575"
+                android:textSize="13sp" />
+
+            <Space
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <EditText
+                android:id="@+id/tcpTimeoutEdit"
+                android:layout_width="80dp"
+                android:layout_height="30dp"
+                android:background="@drawable/bg_spinner_item"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:textSize="13sp"
+                android:textColor="#424242"
+                android:inputType="number"
+                android:maxLines="1"
+                android:gravity="center"
+                android:text="10" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:text="@string/settings_tcp_timeout_unit"
+                android:textColor="#757575"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <!-- TCP超时设置下方分割线 -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#E0E0E0"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="8dp"
             android:layout_marginBottom="8dp" />
 
     </LinearLayout>

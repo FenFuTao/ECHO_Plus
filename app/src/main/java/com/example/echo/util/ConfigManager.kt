@@ -20,8 +20,10 @@ data class PanelConfig(
     var tcpClientServerIp: String = "",
     var tcpClientNetworkPort: String = "",
     var tcpClientHandshake: String = "plot0",
+    var tcpClientTimeoutSeconds: Int = 10,
     // ── TCP 服务端参数 ──
     var tcpServerListenPort: String = "",
+    var tcpServerHandshake: String = "",
     // ── 接收区工具栏 ──
     var outputShowHex: Boolean = false,
     var outputShowTimestamp: Boolean = false,
@@ -49,7 +51,9 @@ data class PanelConfig(
         put("tcpClientServerIp", tcpClientServerIp)
         put("tcpClientNetworkPort", tcpClientNetworkPort)
         put("tcpClientHandshake", tcpClientHandshake)
+        put("tcpClientTimeoutSeconds", tcpClientTimeoutSeconds)
         put("tcpServerListenPort", tcpServerListenPort)
+        put("tcpServerHandshake", tcpServerHandshake)
         put("outputShowHex", outputShowHex)
         put("outputShowTimestamp", outputShowTimestamp)
         put("outputRxHighlight", outputRxHighlight)
@@ -77,7 +81,9 @@ data class PanelConfig(
                 tcpClientServerIp = it.optString("tcpClientServerIp", "")
                 tcpClientNetworkPort = it.optString("tcpClientNetworkPort", "")
                 tcpClientHandshake = it.optString("tcpClientHandshake", "plot0")
+                tcpClientTimeoutSeconds = it.optInt("tcpClientTimeoutSeconds", 10)
                 tcpServerListenPort = it.optString("tcpServerListenPort", "")
+                tcpServerHandshake = it.optString("tcpServerHandshake", "")
                 outputShowHex = it.optBoolean("outputShowHex", false)
                 outputShowTimestamp = it.optBoolean("outputShowTimestamp", false)
                 outputRxHighlight = it.optBoolean("outputRxHighlight", true)

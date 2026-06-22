@@ -19,6 +19,10 @@ class TcpServerManager {
         fun onCountChanged(count: Int)
     }
 
+    fun interface OnConnectionListChangeListener {
+        fun onListChanged(addresses: List<String>)
+    }
+
     fun interface OnServerStateChangeListener {
         fun onStateChanged(running: Boolean, message: String)
     }
@@ -34,11 +38,20 @@ class TcpServerManager {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val serverExecutor = Executors.newCachedThreadPool()
     private var countListener: OnConnectionCountChangeListener? = null
+    private var listListener: OnConnectionListChangeListener? = null
     private var stateListener: OnServerStateChangeListener? = null
     private var dataListener: OnDataReceivedListener? = null
 
+    /** 服务端握手数据，新客户端连接后若收到匹配此字符串的数据则过滤掉 */
+    @Volatile
+    var handshake: String = ""
+
     fun setOnConnectionCountChangeListener(listener: OnConnectionCountChangeListener) {
         this.countListener = listener
+    }
+
+    fun setOnConnectionListChangeListener(listener: OnConnectionListChangeListener) {
+        this.listListener = listener
     }
 
     fun setOnServerStateChangeListener(listener: OnServerStateChangeListener) {
@@ -47,6 +60,15 @@ class TcpServerManager {
 
     fun setOnDataReceivedListener(listener: OnDataReceivedListener) {
         this.dataListener = listener
+    }
+
+    /** 获取当前所有已连接客户端的 IP 地址列表（按连接顺序） */
+    fun getClientAddresses(): List<String> = clientSockets.mapNotNull { socket ->
+        try {
+            socket.inetAddress?.hostAddress ?: "未知"
+        } catch (_: Exception) {
+            null
+        }
     }
 
     fun isRunning(): Boolean = isRunning
@@ -91,6 +113,7 @@ class TcpServerManager {
         }
         serverSocket = null
         updateConnectionCount()
+        updateConnectionList()
         AppLogger.i("TcpServerManager", "TCP服务端已停止")
         mainHandler.post {
             stateListener?.onStateChanged(false, "用户断开连接")
@@ -105,6 +128,7 @@ class TcpServerManager {
         }
         clientSockets.clear()
         updateConnectionCount()
+        updateConnectionList()
         AppLogger.i("TcpServerManager", "所有客户端已断开")
     }
 
@@ -114,6 +138,7 @@ class TcpServerManager {
                 val client = serverSocket?.accept() ?: break
                 clientSockets.add(client)
                 updateConnectionCount()
+                updateConnectionList()
                 AppLogger.i("TcpServerManager",
                     "新客户端已连接: ${client.inetAddress.hostAddress}, 当前连接数: ${clientSockets.size}")
                 // 为每个客户端启动数据读取线程
@@ -131,10 +156,17 @@ class TcpServerManager {
             val input = client.getInputStream()
             val buf = ByteArray(1024)
             val sb = StringBuilder()
+            var handshakeSkipped = false
             while (isRunning && client.isConnected && !client.isClosed) {
                 val len = input.read(buf)
                 if (len < 0) break
                 val chunk = String(buf, 0, len, Charsets.UTF_8)
+
+                // 如果累积缓冲恰好等于握手数据（无 \n），清空缓冲继续
+                if (!handshakeSkipped && handshake.isNotEmpty() && sb.toString() == handshake) {
+                    sb.setLength(0)
+                }
+
                 sb.append(chunk)
                 val str = sb.toString()
                 val idx = str.indexOf('\n')
@@ -142,6 +174,26 @@ class TcpServerManager {
                     val complete = str.substring(0, idx)
                     sb.setLength(0)
                     sb.append(str.substring(idx + 1))
+
+                    if (!handshakeSkipped && handshake.isNotEmpty()) {
+                        // 第一次收到完整行时，检查是否匹配握手数据
+                        if (complete == handshake) {
+                            handshakeSkipped = true
+                            continue  // 跳过，不进入回调
+                        }
+                        // 握手数据没有 \n 被追加到首个完整行前，截断前缀
+                        if (complete.startsWith(handshake)) {
+                            val remainder = complete.substring(handshake.length)
+                            handshakeSkipped = true
+                            if (remainder.isNotEmpty()) {
+                                mainHandler.post {
+                                    dataListener?.onDataReceived(remainder)
+                                }
+                            }
+                            continue
+                        }
+                    }
+                    handshakeSkipped = true
                     mainHandler.post {
                         dataListener?.onDataReceived(complete)
                     }
@@ -149,6 +201,20 @@ class TcpServerManager {
             }
         } catch (_: IOException) {
             // 客户端断开时忽略
+        } finally {
+            // 客户端断开后从列表中移除
+            clientSockets.remove(client)
+            try { client.close() } catch (_: Exception) {}
+            mainHandler.post {
+                updateConnectionCount()
+                updateConnectionList()
+            }
+        }
+    }
+
+    private fun updateConnectionList() {
+        mainHandler.post {
+            listListener?.onListChanged(getClientAddresses())
         }
     }
 

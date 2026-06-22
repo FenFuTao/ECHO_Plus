@@ -8,8 +8,6 @@ import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.charset.Charset
-import java.util.concurrent.Executors
-
 /**
  * TCP 客户端管理器
  * 负责连接/断开 TCP 服务端，发送握手数据。
@@ -26,14 +24,17 @@ class TcpClientManager {
 
     @Volatile
     private var isConnected = false
+    @Volatile
+    private var isConnecting = false
     private var socket: Socket? = null
     private var outputStream: OutputStream? = null
     private var remoteHost: String = ""
     private var remotePort: Int = 0
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val clientExecutor = Executors.newSingleThreadExecutor()
     private var stateListener: OnConnectionStateListener? = null
     private var dataListener: OnDataReceivedListener? = null
+
+    fun isConnecting(): Boolean = isConnecting
 
     fun setOnConnectionStateListener(listener: OnConnectionStateListener) {
         this.stateListener = listener
@@ -51,26 +52,49 @@ class TcpClientManager {
      * @param port 端口
      * @param handshake 握手数据，连接成功后发送
      */
-    fun connect(host: String, port: Int, handshake: String = "plot0"): Boolean {
+    fun connect(host: String, port: Int, handshake: String = "plot0", timeoutMs: Int = 10000): Boolean {
         if (isConnected) {
             AppLogger.w("TcpClientManager", "客户端已连接")
             return false
         }
+        if (isConnecting) {
+            AppLogger.w("TcpClientManager", "客户端正在连接中")
+            return false
+        }
+        isConnecting = true
         remoteHost = host
         remotePort = port
-        clientExecutor.submit {
-            doConnect(host, port, handshake)
-        }
+        val effectiveTimeout = timeoutMs.coerceIn(1000, 60000)
+        Thread {
+            doConnect(host, port, handshake, effectiveTimeout)
+        }.start()
         return true
     }
 
-    private fun doConnect(host: String, port: Int, handshake: String) {
+    @Synchronized
+    private fun clearSocketIfMatch(sock: Socket?) {
+        if (sock != null && socket === sock) {
+            socket = null
+        }
+    }
+
+    private fun doConnect(host: String, port: Int, handshake: String, timeoutMs: Int = 10000) {
+        val sock = Socket()
         try {
-            val sock = Socket()
-            sock.connect(InetSocketAddress(host, port), 5000) // 5秒超时
+            // 提前存入共享字段，以便 disconnect() 能关闭它来中断阻塞
             socket = sock
+            sock.connect(InetSocketAddress(host, port), timeoutMs)
+
+            // 连接成功后检查是否已被取消
+            if (!isConnecting) {
+                try { sock.close() } catch (_: Exception) {}
+                clearSocketIfMatch(sock)
+                return
+            }
+
             outputStream = sock.getOutputStream()
             isConnected = true
+            isConnecting = false
 
             AppLogger.i("TcpClientManager", "TCP客户端已连接到 $host:$port")
 
@@ -91,10 +115,24 @@ class TcpClientManager {
             // 监听远程断开
             listenForRemoteDisconnect(sock)
         } catch (e: Exception) {
-            AppLogger.e("TcpClientManager", "连接失败: ${e.message}")
+            // 关闭本地 socket
+            try { sock.close() } catch (_: Exception) {}
+            // 只有当前 socket 未被替换（新连接）才触发回调，防止旧线程污染新连接状态
+            val socketReplaced: Boolean
+            synchronized(this) {
+                socketReplaced = (socket !== sock)
+                if (!socketReplaced) {
+                    socket = null
+                    outputStream = null
+                }
+            }
+            isConnecting = false
             isConnected = false
-            mainHandler.post {
-                stateListener?.onStateChanged(false, "连接失败: ${e.message}")
+            AppLogger.e("TcpClientManager", "连接失败: ${e.message}")
+            if (!socketReplaced) {
+                mainHandler.post {
+                    stateListener?.onStateChanged(false, "连接失败: ${e.message}")
+                }
             }
         }
     }
@@ -141,11 +179,17 @@ class TcpClientManager {
     }
 
     /**
-     * 用户主动断开连接
+     * 用户主动断开连接（也可用于取消正在进行的连接尝试）
+     *
+     * 取消连接（wasConnecting=true）时不发回调：handleConnectToggle 已同步更新 UI，
+     * doConnect 的 catch 会处理或不处理（若 socket 已被新连接替换）。
+     * 断开已建立连接（wasConnected=true）时发回调通知 UI。
      */
     fun disconnect() {
-        if (!isConnected) return
+        val wasConnected = isConnected
+        val wasConnecting = isConnecting
         isConnected = false
+        isConnecting = false
         try {
             outputStream?.close()
             socket?.close()
@@ -154,20 +198,24 @@ class TcpClientManager {
         }
         outputStream = null
         socket = null
-        AppLogger.i("TcpClientManager", "TCP客户端已断开")
-        mainHandler.post {
-            stateListener?.onStateChanged(false, "用户断开连接")
+        if (wasConnected && !wasConnecting) {
+            AppLogger.i("TcpClientManager", "TCP客户端已断开")
+            mainHandler.post {
+                stateListener?.onStateChanged(false, "用户断开连接")
+            }
+        } else if (wasConnecting) {
+            AppLogger.i("TcpClientManager", "TCP客户端连接已取消")
         }
     }
 
     fun send(data: ByteArray) {
-        clientExecutor.submit {
+        Thread {
             try {
                 outputStream?.write(data)
                 outputStream?.flush()
             } catch (e: IOException) {
                 AppLogger.e("TcpClientManager", "发送数据失败: ${e.message}")
             }
-        }
+        }.start()
     }
 }

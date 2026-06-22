@@ -19,6 +19,7 @@ class TcpClientTransceiver : DataTransceiver {
     var host: String = ""
     var port: Int = 0
     var handshake: String = "plot0"
+    var timeoutMs: Int = 10000
 
     init {
         // 将 Manager 的回调桥接到统一接口的回调
@@ -39,7 +40,7 @@ class TcpClientTransceiver : DataTransceiver {
             AppLogger.w("TcpClientTransceiver", "TCP客户端已连接")
             return false
         }
-        return manager.connect(host, port, handshake)
+        return manager.connect(host, port, handshake, timeoutMs)
     }
 
     override fun disconnect() {
@@ -47,6 +48,9 @@ class TcpClientTransceiver : DataTransceiver {
     }
 
     override fun isConnected(): Boolean = manager.isConnected()
+
+    /** 当前是否正在尝试连接中 */
+    fun isConnecting(): Boolean = manager.isConnecting()
 
     override fun setOnDataReceivedListener(listener: ((String) -> Unit)?) {
         dataListener = listener

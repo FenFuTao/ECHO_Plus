@@ -67,6 +67,9 @@
     <string name="settings_ui_size">界面尺寸</string>
     <string name="settings_option_narrow">窄（适合手机）</string>
     <string name="settings_option_wide">宽（适合平板）</string>
+    <string name="settings_tcp_timeout">TCP连接超时</string>
+    <string name="settings_tcp_timeout_unit">秒</string>
+    <string name="tcp_server_conn_empty">无设备连接</string>
     <string name="serial_config_title">串口参数配置</string>
     <string name="serial_port">端口号</string>
     <string name="serial_baud_rate">波特率</string>

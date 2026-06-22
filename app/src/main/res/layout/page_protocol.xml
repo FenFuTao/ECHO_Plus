@@ -370,6 +370,21 @@
                 android:paddingStart="16dp" android:paddingEnd="16dp"
                 android:paddingTop="6dp" android:paddingBottom="2dp">
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/tcp_client_handshake" android:textColor="#757575" android:textSize="13sp" />
+                <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+                <EditText android:id="@+id/tcpServerHandshake"
+                    android:layout_width="140dp" android:layout_height="30dp"
+                    android:background="@drawable/bg_spinner_item"
+                    android:paddingStart="8dp" android:paddingEnd="8dp"
+                    android:textSize="13sp" android:textColor="#424242"
+                    android:inputType="text" android:maxLines="1" />
+            </LinearLayout>
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="6dp" android:paddingBottom="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:text="@string/tcp_server_conn_count" android:textColor="#757575" android:textSize="13sp" />
                 <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
                 <TextView android:id="@+id/tcpServerConnCount"
@@ -380,10 +395,23 @@
                     android:textSize="13sp" android:textColor="#424242" android:text="0" />
             </LinearLayout>
 
-            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            <!-- 当前连接（Spinner 显示已连接设备 IP，按连接顺序排序） -->
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical"
                 android:paddingStart="16dp" android:paddingEnd="16dp"
-                android:paddingTop="6dp" android:paddingBottom="2dp"
-                android:text="@string/tcp_server_current_conn" android:textColor="#757575" android:textSize="13sp" />
+                android:paddingTop="6dp" android:paddingBottom="2dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/tcp_server_current_conn" android:textColor="#757575" android:textSize="13sp" />
+                <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+                <Spinner android:id="@+id/tcpServerConnSpinner"
+                    android:layout_width="140dp" android:layout_height="30dp"
+                    android:background="@drawable/bg_spinner_item"
+                    android:paddingStart="8dp" android:paddingEnd="8dp"
+                    android:popupBackground="@android:color/white"
+                    android:dropDownVerticalOffset="1dp"
+                    android:dropDownHeight="308dp"
+                    android:textSize="13sp" android:textColor="#424242" />
+            </LinearLayout>
 
             <View android:layout_width="match_parent" android:layout_height="1dp"
                 android:background="#E0E0E0"

@@ -50,6 +50,7 @@ class MainActivity : AppCompatActivity() {
     private var currentMenuRes = 0
     private var selectedMenuBtnId = 0
     private var isConnected = false
+    private var isTcpConnecting = false
     private var selectedProtocolPosition = -1
 
     // ── 统一数据收发接口：各协议封装为 DataTransceiver ──
@@ -145,6 +146,60 @@ class MainActivity : AppCompatActivity() {
 
         // 必须优先加载配置，后续 UI 初始化才能读到已保存的状态
         panelConfig = ConfigManager.loadConfig()
+
+        // 从配置中恢复上次使用的协议和收发器，无需打开协议页面即可正确连接
+        selectedProtocolPosition = panelConfig.protocolSelection
+        currentTransceiver = when (selectedProtocolPosition) {
+            0 -> serialTransceiver
+            1 -> udpTransceiver
+            2 -> tcpClientTransceiver
+            3 -> tcpServerTransceiver
+            4 -> demoTransceiver
+            else -> serialTransceiver
+        }
+        // 为所有数据收发器设置统一的接收回调
+        tcpClientTransceiver.setOnDataReceivedListener { data -> appendOutput(data, false) }
+        tcpServerTransceiver.setOnDataReceivedListener { data -> appendOutput(data, false) }
+        serialTransceiver.setOnDataReceivedListener { data -> appendOutput(data, false) }
+        udpTransceiver.setOnDataReceivedListener { data -> appendOutput(data, false) }
+        demoTransceiver.setOnDataReceivedListener { data -> appendOutput(data, false) }
+
+        // 设置 TCP 客户端连接状态回调，超时/失败时自动恢复按钮状态
+        tcpClientTransceiver.setOnStateChangedListener { connected, message ->
+            val btn = findViewById<ImageButton>(R.id.menuBarConnect)
+            if (connected) {
+                isTcpConnecting = false
+                isConnected = true
+                btn.setImageResource(R.drawable.ic_connect_on)
+                btn.alpha = 1f
+            } else {
+                // 只要 MainActivity 认为处于连接/连接中状态就处理
+                if (isConnected || isTcpConnecting) {
+                    isTcpConnecting = false
+                    isConnected = false
+                    btn.setImageResource(R.drawable.ic_connect_off)
+                    btn.alpha = 1f
+                    showToast(message)
+                }
+            }
+        }
+        // 设置 TCP 服务端连接状态回调（断开时恢复按钮）
+        tcpServerTransceiver.setOnStateChangedListener { connected, message ->
+            if (!connected && isConnected) {
+                isConnected = false
+                findViewById<ImageButton>(R.id.menuBarConnect).setImageResource(R.drawable.ic_connect_off)
+                showToast(message)
+            }
+        }
+        // 设置 TCP 服务端连接数变化回调，动态更新协议页面的连接数量显示
+        tcpServerTransceiver.setOnConnectionCountChangeListener { count ->
+            protocolView?.findViewById<TextView>(R.id.tcpServerConnCount)?.text = count.toString()
+        }
+        // 设置 TCP 服务端客户端列表变化回调，动态更新当前连接 Spinner
+        tcpServerTransceiver.setOnConnectionListChangeListener { addresses ->
+            updateTcpServerConnSpinner(addresses)
+        }
+
         setupOutputView()
 
         applyColors()
@@ -481,8 +536,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun restoreTcpServerFields() {
         protocolView?.findViewById<EditText>(R.id.tcpServerListenPort)?.setText(panelConfig.tcpServerListenPort)
+        protocolView?.findViewById<EditText>(R.id.tcpServerHandshake)?.setText(panelConfig.tcpServerHandshake)
         val connCountText = protocolView?.findViewById<TextView>(R.id.tcpServerConnCount)
         connCountText?.text = tcpServerTransceiver.getManager().getConnectionCount().toString()
+        // 刷新当前连接 Spinner，确保页面打开时与 Manager 状态一致
+        updateTcpServerConnSpinner(tcpServerTransceiver.getManager().getClientAddresses())
     }
 
     private fun setupProtocolSpinner() {
@@ -498,13 +556,6 @@ class MainActivity : AppCompatActivity() {
         }
         adapter.setDropDownViewResource(R.layout.spinner_item_protocol)
         spinner.adapter = adapter
-
-        // 为所有数据收发器设置统一的接收回调，数据统一送至输出窗口
-        tcpClientTransceiver.setOnDataReceivedListener { data -> appendOutput(data, false) }
-        tcpServerTransceiver.setOnDataReceivedListener { data -> appendOutput(data, false) }
-        serialTransceiver.setOnDataReceivedListener { data -> appendOutput(data, false) }
-        udpTransceiver.setOnDataReceivedListener { data -> appendOutput(data, false) }
-        demoTransceiver.setOnDataReceivedListener { data -> appendOutput(data, false) }
 
         spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
@@ -616,6 +667,33 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateTcpServerConnSpinner(addresses: List<String>) {
+        val spinner = protocolView?.findViewById<Spinner>(R.id.tcpServerConnSpinner) ?: return
+        val isEmpty = addresses.isEmpty()
+        // 无设备时用一个空字符串作为选项（Spinner 显示空白）
+        val options = if (isEmpty) listOf("") else addresses
+        val adapter = object : ArrayAdapter<String>(this, R.layout.spinner_item_protocol, options) {
+            override fun isEnabled(position: Int): Boolean = !isEmpty
+            override fun getDropDownView(position: Int, convertView: android.view.View?, parent: android.view.ViewGroup): android.view.View {
+                val view = super.getDropDownView(position, convertView, parent) as TextView
+                view.setBackgroundResource(R.drawable.bg_spinner_dropdown_item)
+                view.setPadding(20, 14, 20, 14)
+                // 无设备时显示占位文本且不可选（灰色）
+                if (isEmpty) {
+                    view.text = getString(R.string.tcp_server_conn_empty)
+                    view.isEnabled = false
+                }
+                return view
+            }
+        }
+        adapter.setDropDownViewResource(R.layout.spinner_item_protocol)
+        spinner.adapter = adapter
+        // 有设备时始终选中第一个（按连接顺序排序）；无设备时无选中
+        if (!isEmpty) {
+            spinner.setSelection(0)
+        }
+    }
+
     // ====================== 设置页面 ======================
 
     private fun setupSettingsButton() {
@@ -652,6 +730,7 @@ class MainActivity : AppCompatActivity() {
         if (settingsView == null) {
             settingsView = layoutInflater.inflate(R.layout.page_settings, null)
             setupSettingsSpinner()
+            setupTcpTimeoutField()
         }
 
         highlightMenuBarButton(R.id.menuBarSetting)
@@ -698,6 +777,34 @@ class MainActivity : AppCompatActivity() {
         }
         val primaryColor = android.graphics.Color.parseColor(panelConfig.primaryColorHex)
         settingsView?.findViewById<View>(R.id.settingsHeader)?.setBackgroundColor(primaryColor)
+    }
+
+    private fun setupTcpTimeoutField() {
+        val editText = settingsView?.findViewById<EditText>(R.id.tcpTimeoutEdit) ?: return
+        editText.setText(panelConfig.tcpClientTimeoutSeconds.toString())
+        editText.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) {
+                saveTcpTimeoutFromField(editText)
+            }
+        }
+        editText.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE || actionId == android.view.inputmethod.EditorInfo.IME_ACTION_NEXT) {
+                saveTcpTimeoutFromField(editText)
+                true
+            } else false
+        }
+    }
+
+    private fun saveTcpTimeoutFromField(editText: EditText) {
+        val text = editText.text.toString()
+        val value = text.toIntOrNull()
+        if (value == null || value < 1 || value > 60) {
+            editText.setText(panelConfig.tcpClientTimeoutSeconds.toString())
+            showToast("超时时间需在 1~60 秒之间")
+        } else if (value != panelConfig.tcpClientTimeoutSeconds) {
+            panelConfig.tcpClientTimeoutSeconds = value
+            ConfigManager.saveConfig(panelConfig)
+        }
     }
 
     private fun setupSettingsSpinner() {
@@ -1261,16 +1368,22 @@ class MainActivity : AppCompatActivity() {
         when (selectedProtocolPosition) {
             2 -> {
                 // ── TCP 客户端 ──
-                if (tcpClientTransceiver.isConnected()) {
+                if (tcpClientTransceiver.isConnected() || isTcpConnecting) {
+                    val wasConnecting = isTcpConnecting
                     tcpClientTransceiver.disconnect()
+                    isTcpConnecting = false
                     isConnected = false
                     btn.setImageResource(R.drawable.ic_connect_off)
+                    btn.alpha = 1f
                     AppLogger.i("MainActivity", "TCP客户端断开")
-                    showToast("TCP客户端已断开")
+                    showToast(if (wasConnecting) "已取消连接" else "TCP客户端已断开")
                 } else {
                     val ip = protocolView?.findViewById<EditText>(R.id.tcpClientServerIp)?.text?.toString()
+                        ?: panelConfig.tcpClientServerIp
                     val portStr = protocolView?.findViewById<EditText>(R.id.tcpClientNetworkPort)?.text?.toString()
+                        ?: panelConfig.tcpClientNetworkPort
                     val handshake = protocolView?.findViewById<EditText>(R.id.tcpClientHandshake)?.text?.toString()
+                        ?: panelConfig.tcpClientHandshake
                     if (ip.isNullOrBlank()) { showToast("请输入服务器IP"); return }
                     val port = portStr?.toIntOrNull()
                     if (port == null || port !in 1..65535) { showToast("请输入有效端口 (1-65535)"); return }
@@ -1280,9 +1393,11 @@ class MainActivity : AppCompatActivity() {
                     tcpClientTransceiver.host = ip
                     tcpClientTransceiver.port = port
                     tcpClientTransceiver.handshake = hs
+                    tcpClientTransceiver.timeoutMs = panelConfig.tcpClientTimeoutSeconds * 1000
                     if (tcpClientTransceiver.connect()) {
-                        isConnected = true
+                        isTcpConnecting = true
                         btn.setImageResource(R.drawable.ic_connect_on)
+                        btn.alpha = 0.5f
                         showToast("正在连接 $ip:$port ...")
                     }
                 }
@@ -1296,11 +1411,17 @@ class MainActivity : AppCompatActivity() {
                     showToast("TCP服务端已停止")
                 } else {
                     val portStr = protocolView?.findViewById<EditText>(R.id.tcpServerListenPort)?.text?.toString()
+                        ?: panelConfig.tcpServerListenPort
+                    val handshakeStr = protocolView?.findViewById<EditText>(R.id.tcpServerHandshake)?.text?.toString()
+                        ?: panelConfig.tcpServerHandshake
                     val port = portStr?.toIntOrNull()
                     if (port == null || port !in 1..65535) { showToast("请输入有效端口 (1-65535)"); return }
-                    panelConfig.tcpServerListenPort = portStr; ConfigManager.saveConfig(panelConfig)
+                    panelConfig.tcpServerListenPort = portStr
+                    panelConfig.tcpServerHandshake = handshakeStr ?: ""
+                    ConfigManager.saveConfig(panelConfig)
                     // 配置收发器参数并通过统一接口启动
                     tcpServerTransceiver.listenPort = port
+                    tcpServerTransceiver.handshake = handshakeStr ?: ""
                     if (tcpServerTransceiver.connect()) {
                         isConnected = true
                         btn.setImageResource(R.drawable.ic_connect_on)
@@ -1334,7 +1455,7 @@ class MainActivity : AppCompatActivity() {
         isConnected = false; findViewById<ImageButton>(R.id.menuBarConnect).setImageResource(R.drawable.ic_connect_off); showToast("已断开")
     }
 
-    private fun showToast(msg: String) { val t = Toast.makeText(this, msg, Toast.LENGTH_SHORT); t.show(); Handler(Looper.getMainLooper()).postDelayed({ t.cancel() }, 500) }
+    private fun showToast(msg: String) { Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }
 
     private fun restartApp() {
         val intent = Intent(this, MainActivity::class.java)

@@ -17,6 +17,23 @@ class TcpServerTransceiver : DataTransceiver {
 
     // ── 连接参数 ──
     var listenPort: Int = 0
+    var handshake: String = ""
+        set(value) {
+            field = value
+            manager.handshake = value
+        }
+    private var countListener: ((Int) -> Unit)? = null
+    private var listListener: ((List<String>) -> Unit)? = null
+
+    /** 设置连接数变化回调 */
+    fun setOnConnectionCountChangeListener(listener: ((Int) -> Unit)?) {
+        countListener = listener
+    }
+
+    /** 设置客户端列表变化回调 */
+    fun setOnConnectionListChangeListener(listener: ((List<String>) -> Unit)?) {
+        listListener = listener
+    }
 
     init {
         manager.setOnDataReceivedListener(TcpServerManager.OnDataReceivedListener { data ->
@@ -27,6 +44,10 @@ class TcpServerTransceiver : DataTransceiver {
         })
         manager.setOnConnectionCountChangeListener(TcpServerManager.OnConnectionCountChangeListener { count ->
             AppLogger.i("TcpServerTransceiver", "客户端连接数变化: $count")
+            countListener?.invoke(count)
+        })
+        manager.setOnConnectionListChangeListener(TcpServerManager.OnConnectionListChangeListener { addresses ->
+            listListener?.invoke(addresses)
         })
     }
 
