@@ -23,6 +23,7 @@ import android.widget.TextView
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.OnBackPressedCallback
+import androidx.core.content.res.ResourcesCompat
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.fenfutao.echo.transceiver.DataTransceiver
@@ -1252,7 +1253,7 @@ class MainActivity : AppCompatActivity() {
         outputText.textSize = outputFontSize
         outputText.setTextColor(android.graphics.Color.parseColor("#E0E0E0"))
         outputText.setLineSpacing(2f, 1f)
-        outputText.typeface = android.graphics.Typeface.MONOSPACE
+        outputText.typeface = ResourcesCompat.getFont(this, R.font.maple_mono)
         scrollView.addView(outputText); root.addView(scrollView)
 
         // 发送条
@@ -1271,6 +1272,7 @@ class MainActivity : AppCompatActivity() {
         sendEditText = android.widget.EditText(this)
         sendEditText.layoutParams = LinearLayout.LayoutParams(0, dpToPx(34), 1f)
         sendEditText.textSize = 14f
+        sendEditText.typeface = ResourcesCompat.getFont(this, R.font.maple_mono)
         sendEditText.setTextColor(android.graphics.Color.parseColor("#E0E0E0"))
         sendEditText.setHintTextColor(android.graphics.Color.parseColor("#616161"))
         sendEditText.setHint(if (sendHexMode) "输入Hex (0-9 A-F)..." else "输入发送数据...")

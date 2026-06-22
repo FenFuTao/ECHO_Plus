@@ -1,6 +1,7 @@
 # ── Gradle ──
 .gradle/
 /build/
+app/release/
 
 # ── IDE (Android Studio / IntelliJ) ──
 *.iml
