@@ -6,4 +6,11 @@
         <item name="colorSecondary">#FF03DAC5</item>
         <item name="colorOnSecondary">@android:color/black</item>
     </style>
+
+    <!-- 启动闪屏主题：蓝底 + 居中图标，Activity 加载完成后切换为 Theme.ECHO -->
+    <style name="Theme.ECHO.Splash" parent="Theme.ECHO">
+        <item name="android:windowBackground">@drawable/splash_background</item>
+        <item name="android:statusBarColor">#FF2983BB</item>
+        <item name="android:navigationBarColor">#FF2983BB</item>
+    </style>
 </resources>

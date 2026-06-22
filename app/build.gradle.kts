@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.echo"
+    namespace = "com.fenfutao.echo"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.echo"
+        applicationId = "com.fenfutao.echo"
         minSdk = 26
         targetSdk = 36
         versionCode = 1

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp"
+    android:height="120dp"
+    android:viewportWidth="120"
+    android:viewportHeight="120">
+    <!-- 与 bg_decoration.xml 保持一致的示波器风格 -->
+    <!-- 宽矩形外框（按 bg_decoration 比例 18:16 放大至 120 视口） -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.5"
+        android:pathData="M15,22 L105,22 Q107,22 107,24 L107,98 Q107,100 105,100 L15,100 Q13,100 13,98 L13,24 Q13,22 15,22 Z" />
+
+    <!-- 十字交叉网格线（仅水平中线 + 垂直中线） -->
+    <path android:fillColor="#00000000" android:strokeColor="#55FFFFFF" android:strokeWidth="0.8" android:pathData="M15,60 L105,60" />
+    <path android:fillColor="#00000000" android:strokeColor="#55FFFFFF" android:strokeWidth="0.8" android:pathData="M60,22 L60,100" />
+
+    <!-- 信号轨迹（波形居中，中心对称于 x=60） -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M19,60 C29,65 34,70 44,50 C54,30 59,40 69,50 C79,60 89,50 101,60" />
+</vector>

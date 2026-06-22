@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android"
+    android:opacity="opaque">
+    <!-- 背景色：蓝色系，与应用主色调 #2983BB 一致 -->
+    <item android:drawable="@color/splash_background" />
+
+    <!-- 居中图标 -->
+    <item
+        android:drawable="@drawable/ic_splash_foreground"
+        android:gravity="center" />
+</layer-list>
