@@ -80,9 +80,24 @@ class MainActivity : AppCompatActivity() {
     // ── 输出批量刷新优化 ──
     private val outputHandler = Handler(Looper.getMainLooper())
     private var outputFlushPending = false
-    /** 上次已刷新到 outputText 的条目数 */
+
+    /** 已渲染到显示区的条目计数（从 outputDataEntries 开头起算，removeAt(0) 时同步递减） */
     private var lastDisplayedEntryCount = 0
+    /**
+     * 单显示缓冲区 — TextView 直接使用此 SpannableStringBuilder。
+     * 递增追加新条目，超限时从开头裁剪最旧行。
+     * 无需多段环形缓冲区：TextView 自带高效的增量布局。
+     */
+    private val displayBuffer = SpannableStringBuilder()
+    /** 显示文本最大字符数，超限时从开头裁剪 */
+    private val MAX_DISPLAY_CHARS = MAX_OUTPUT_TEXT_LENGTH / 2
+
     private val outputFlushRunnable = Runnable { doFlushOutput() }
+
+    /** FPS 副标题定时刷新 */
+    private val fpsUpdateRunnable = Runnable { updateParamHeaderTitle() }
+    /** FPS 刷新间隔（毫秒） */
+    private val fpsUpdateIntervalMs = 500L
 
     // ── 统一数据收发接口：各协议封装为 DataTransceiver ──
     private val tcpClientTransceiver = TcpClientTransceiver()
@@ -374,11 +389,24 @@ class MainActivity : AppCompatActivity() {
      */
     private fun updateParamHeaderTitle() {
         val titleView = findViewById<TextView>(R.id.paramHeaderTitle)
-        val baseText = getString(R.string.param_header_title)
-        titleView.text = if (paramBuffer.isLocked) {
-            "$baseText ${paramBuffer.expectedCount}"
+        val subHeader = findViewById<View>(R.id.paramSubHeader)
+        val leftView = findViewById<TextView>(R.id.paramSubHeaderLeft)
+        val fpsView = findViewById<TextView>(R.id.paramSubHeaderFps)
+        titleView.text = getString(R.string.param_header_title)
+
+        if (paramBuffer.isLocked) {
+            val prefix = paramBuffer.lastPrefix
+            val count = paramBuffer.expectedCount
+            val fps = paramBuffer.getEstimatedFps()
+            leftView.text = if (prefix.isEmpty()) "数据量: $count" else "$prefix    数据量: $count"
+            fpsView.text = "FPS: $fps"
+            subHeader.visibility = View.VISIBLE
+            // ★ 每 0.5s 重新调度刷新 FPS
+            outputHandler.removeCallbacks(fpsUpdateRunnable)
+            outputHandler.postDelayed(fpsUpdateRunnable, fpsUpdateIntervalMs)
         } else {
-            baseText
+            subHeader.visibility = View.GONE
+            outputHandler.removeCallbacks(fpsUpdateRunnable)
         }
     }
 
@@ -485,6 +513,7 @@ class MainActivity : AppCompatActivity() {
                 btn.alpha = 1f
                 // 连接建立 -> 锁定数据引擎 Spinner
                 setDataEngineSpinnerEnabled(false)
+                onConnectionStateChanged(true)
             } else {
                 if (isConnected || isTcpConnecting) {
                     isTcpConnecting = false
@@ -494,6 +523,7 @@ class MainActivity : AppCompatActivity() {
                     showToastShort(message)
                     // 连接断开 -> 解锁数据引擎 Spinner
                     setDataEngineSpinnerEnabled(true)
+                    onConnectionStateChanged(false)
                 }
             }
         }
@@ -505,6 +535,7 @@ class MainActivity : AppCompatActivity() {
                 showToastShort(message)
                 // 服务端异常停止 -> 解锁数据引擎 Spinner
                 setDataEngineSpinnerEnabled(true)
+                onConnectionStateChanged(false)
             }
         }
         // 设置 TCP 服务端连接数变化回调，动态更新协议页面的连接数量显示
@@ -525,6 +556,7 @@ class MainActivity : AppCompatActivity() {
                 btn.alpha = 1f
                 // 连接建立 -> 锁定数据引擎 Spinner
                 setDataEngineSpinnerEnabled(false)
+                onConnectionStateChanged(true)
             } else {
                 if (isConnected) {
                     isConnected = false
@@ -533,6 +565,7 @@ class MainActivity : AppCompatActivity() {
                     showToastShort(message)
                     // 连接断开 -> 解锁数据引擎 Spinner
                     setDataEngineSpinnerEnabled(true)
+                    onConnectionStateChanged(false)
                 }
             }
         }
@@ -1324,6 +1357,7 @@ class MainActivity : AppCompatActivity() {
             settingsView = layoutInflater.inflate(R.layout.page_settings, null)
             setupSettingsSpinner()
             setupTcpTimeoutField()
+            setupSettingsExportButton()
             setupSettingsResetButton()
         }
 
@@ -1449,6 +1483,80 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+    }
+
+    private fun setupSettingsExportButton() {
+        val row = settingsView?.findViewById<View>(R.id.settingsExportRow) ?: return
+
+        row.setOnClickListener {
+            val entries: List<OutputEntry>
+            synchronized(outputDataEntries) {
+                entries = outputDataEntries.toList()
+            }
+
+            if (entries.isEmpty()) {
+                showToast("没有可导出的输出数据")
+                return@setOnClickListener
+            }
+
+            Thread {
+                try {
+                    val ts = java.text.SimpleDateFormat("yy.MM.dd-HH-mm-ss", java.util.Locale.getDefault())
+                        .format(java.util.Date())
+                    val filename = "ECHO-$ts.log"
+
+                    val content = buildString {
+                        val timeFmt = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.getDefault())
+                        for (entry in entries) {
+                            if (!entry.visible) continue
+                            // 时间戳
+                            if (entry.timestampMs != null) {
+                                append("[").append(timeFmt.format(java.util.Date(entry.timestampMs))).append("] ")
+                            }
+                            // Rx/Tx 标记
+                            append(if (entry.isTx) "[TX] " else "[RX] ")
+                            // 类型标记
+                            when (entry.type) {
+                                com.fenfutao.echo.dataengine.OutputType.IMAGE_PACKET -> append("[IMAGE] ")
+                                else -> {}
+                            }
+                            // 内容：hex 解码为可读文本
+                            append(entry.text.hexToString(outputUseGbk))
+                            append("\n")
+                        }
+                    }
+
+                    // Android 10+ 使用 MediaStore 写入 Download 目录
+                    if (android.os.Build.VERSION.SDK_INT >= 29) {
+                        val contentValues = android.content.ContentValues().apply {
+                            put(android.provider.MediaStore.Downloads.DISPLAY_NAME, filename)
+                            put(android.provider.MediaStore.Downloads.MIME_TYPE, "text/plain")
+                            put(android.provider.MediaStore.Downloads.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                        }
+                        val uri = contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                        uri?.let {
+                            contentResolver.openOutputStream(it)?.use { os ->
+                                os.write(content.toByteArray(Charsets.UTF_8))
+                            }
+                        } ?: throw java.io.IOException("无法创建文件")
+                    } else {
+                        val dir = android.os.Environment.getExternalStoragePublicDirectory(
+                            android.os.Environment.DIRECTORY_DOWNLOADS)
+                        if (!dir.exists()) dir.mkdirs()
+                        val file = java.io.File(dir, filename)
+                        file.writeText(content, Charsets.UTF_8)
+                    }
+
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        showToastShort("已导出到 Download/$filename")
+                    }
+                } catch (e: Exception) {
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        showToastShort("导出失败: ${e.message}")
+                    }
+                }
+            }.start()
         }
     }
 
@@ -1741,7 +1849,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         clockWrap.addView(clockView); toolbar.addView(clockWrap)
-        btnRx = makeBtn("Rx", true).apply { (this as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputRxHighlight) "#4FC3F7" else "#9E9E9E")); setOnClickListener { outputRxHighlight = !outputRxHighlight; (btnRx as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputRxHighlight) "#4FC3F7" else "#9E9E9E")); updateImagePacketFilter(); btnRxDropdown.invalidate(); refreshOutputDisplay() } }
+        btnRx = makeBtn("Rx", true).apply { (this as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputRxHighlight) "#4FC3F7" else "#9E9E9E")); setOnClickListener { outputRxHighlight = !outputRxHighlight; (btnRx as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputRxHighlight) "#4FC3F7" else "#9E9E9E")); updateImagePacketFilter(); btnRxDropdown.invalidate(); btnRx.invalidate() } }
         toolbar.addView(btnRx)
 
         // ── Rx 下拉箭头（单个向下箭头 ∨）──
@@ -1786,7 +1894,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         toolbar.addView(btnRxDropdown)
-        btnTx = makeBtn("Tx", true).apply { (this as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputTxHighlight) "#4FC3F7" else "#9E9E9E")); setOnClickListener { outputTxHighlight = !outputTxHighlight; (btnTx as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputTxHighlight) "#4FC3F7" else "#9E9E9E")); refreshOutputDisplay() } }
+        btnTx = makeBtn("Tx", true).apply { (this as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputTxHighlight) "#4FC3F7" else "#9E9E9E")); setOnClickListener { outputTxHighlight = !outputTxHighlight; (btnTx as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputTxHighlight) "#4FC3F7" else "#9E9E9E")); btnTx.invalidate() } }
         toolbar.addView(btnTx); toolbar.addView(makeSep())
         btnFontInc = makeBtn("A+", true, true).apply { setOnClickListener { outputFontSize = (outputFontSize + 1f).coerceAtMost(24f); outputText.textSize = outputFontSize } }
         toolbar.addView(btnFontInc)
@@ -1795,7 +1903,7 @@ class MainActivity : AppCompatActivity() {
         btnEncoding = makeBtn(if (outputUseGbk) "GBK" else "UTF-8", false, true).apply { setOnClickListener { outputUseGbk = !outputUseGbk; (btnEncoding as android.widget.TextView).text = if (outputUseGbk) "GBK" else "UTF-8" } }
         toolbar.addView(btnEncoding)
         toolbar.addView(makeSep())
-        btnClear = makeBtn("E", true, true).apply { setOnClickListener { outputDataEntries.clear(); outputText.text = ""; lastDisplayedEntryCount = 0; autoScrollEnabled = true; scrollToBottomBtn.visibility = View.GONE; outputScrollView.invalidate() } }
+        btnClear = makeBtn("E", true, true).apply { setOnClickListener { synchronized(outputDataEntries) { outputDataEntries.clear() }; displayBuffer.clear(); outputText.setText(displayBuffer, android.widget.TextView.BufferType.SPANNABLE); lastDisplayedEntryCount = 0; autoScrollEnabled = true; scrollToBottomBtn.visibility = View.GONE; outputScrollView.invalidate() } }
         toolbar.addView(btnClear)
         root.addView(toolbar)
         // 用 FrameLayout 包裹 ScrollView 以便叠加跳底按钮
@@ -1814,14 +1922,29 @@ class MainActivity : AppCompatActivity() {
         outputText.setTextColor(android.graphics.Color.parseColor("#E0E0E0"))
         outputText.setLineSpacing(2f, 1f)
         outputText.typeface = ResourcesCompat.getFont(this, R.font.maple_mono)
+        outputText.setText(displayBuffer, android.widget.TextView.BufferType.SPANNABLE)
         scrollView.addView(outputText)
 
-        // 跳底按钮（仅用户手动滚动后显示）
-        scrollToBottomBtn = android.widget.TextView(this).apply {
-            text = "↓"
-            textSize = 18f
-            gravity = android.view.Gravity.CENTER
-            setTextColor(android.graphics.Color.parseColor("#E0E0E0"))
+        // 跳底按钮（仅用户手动滚动后显示，两根线组成的向下箭头）
+        scrollToBottomBtn = object : android.view.View(this) {
+            private val arrowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.parseColor("#E0E0E0")
+                strokeWidth = dpToPx(3).toFloat()
+                style = android.graphics.Paint.Style.STROKE
+                strokeCap = android.graphics.Paint.Cap.ROUND
+            }
+            override fun onDraw(canvas: android.graphics.Canvas) {
+                super.onDraw(canvas)
+                val w = width.toFloat()
+                val h = height.toFloat()
+                val cx = w / 2f
+                val cy = h / 2f
+                val size = minOf(w, h) * 0.35f
+                // 向下的 V 形箭头
+                canvas.drawLine(cx - size * 0.5f, cy - size * 0.2f, cx, cy + size * 0.4f, arrowPaint)
+                canvas.drawLine(cx, cy + size * 0.4f, cx + size * 0.5f, cy - size * 0.2f, arrowPaint)
+            }
+        }.apply {
             setBackgroundDrawable(android.graphics.drawable.GradientDrawable().apply {
                 shape = android.graphics.drawable.GradientDrawable.OVAL
                 setSize(dpToPx(40), dpToPx(40))
@@ -1841,9 +1964,12 @@ class MainActivity : AppCompatActivity() {
         scrollViewWrapper.addView(scrollToBottomBtn)
 
         // 监听用户手动滚动 → 停止自动滚动，显示跳底按钮
+        // ★ 连接时 scrollLocked=true，此回调不会被触发；断开后才生效
         scrollView.onUserScrolledListener = {
-            autoScrollEnabled = false
-            scrollToBottomBtn.visibility = View.VISIBLE
+            if (!isConnected) {
+                autoScrollEnabled = false
+                scrollToBottomBtn.visibility = View.VISIBLE
+            }
         }
 
         root.addView(scrollViewWrapper)
@@ -2085,8 +2211,13 @@ class MainActivity : AppCompatActivity() {
 
         // ── 图像数据 ──
         if (outputType == OutputType.IMAGE_PACKET) {
+            // ★ 保存当前 ImageBuffer 状态以判断是前导帧还是数据载荷
+            val isDataPayload = imageBuffer.isCollecting
             // 馈送至图像缓存区（帧头 + 数据成对存储）
             imageBuffer.feed(data)
+
+            // ★ 原始数据载荷仅进入 ImageBuffer，不写入显示缓冲
+            if (isDataPayload) return
 
             // ★ 图像数据包关闭 或 全局 Rx 关闭 → 不写入显示缓冲
             if (!rxShowImagePacket || !outputRxHighlight) {
@@ -2097,8 +2228,10 @@ class MainActivity : AppCompatActivity() {
         // ── 输出显示缓冲（统一单缓冲区）──
         synchronized(outputDataEntries) {
             outputDataEntries.add(OutputEntry(data, ts, isTx, true, escapeControlChars, outputType, isSamplingData))
+            // 超过上限时移除最旧条目，同步调整已显示计数
             while (outputDataEntries.size > MAX_OUTPUT_ENTRIES) {
                 outputDataEntries.removeAt(0)
+                if (lastDisplayedEntryCount > 0) lastDisplayedEntryCount--
             }
         }
 
@@ -2120,184 +2253,138 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 执行批量刷新 — 增量追加新条目到 outputText，不再全量重建
-     * 仅在 main thread 上调用（通过 Handler）
+     * 将显示缓冲区裁剪到字符上限以内。
+     * 从开头删除最旧内容，在换行边界处切割以避免截断行。
      */
-    private fun doFlushOutput() {
-        outputFlushPending = false
+    private fun trimDisplayBuffer() {
+        if (displayBuffer.length <= MAX_DISPLAY_CHARS) return
+        // 多裁剪 10% 以避免频繁触发裁剪
+        val target = displayBuffer.length - MAX_DISPLAY_CHARS + MAX_DISPLAY_CHARS / 10
+        var cut = target.coerceIn(0, displayBuffer.length)
+        while (cut < displayBuffer.length && displayBuffer[cut] != '\n') cut++
+        if (cut < displayBuffer.length) cut++ // 跳过换行符
+        displayBuffer.delete(0, cut)
+    }
+
+    /**
+     * 构建单条条目的显示文本（不包含前置换行）
+     * @return 构建好的 SpannableStringBuilder，若条目被过滤则返回 null
+     */
+    private fun buildEntryDisplay(entry: OutputEntry, rxColor: Int, txColor: Int, timestampColor: Int): SpannableStringBuilder? {
+        if (!entry.visible) return null
+        if ((entry.isTx && !outputTxHighlight) || (!entry.isTx && !outputRxHighlight)) return null
+        if (!entry.isTx && entry.type == OutputType.IMAGE_PACKET && !rxShowImagePacket) return null
+        if (!entry.isTx && entry.isSamplingData && !rxShowSampleData) return null
+
+        val contentStr: String
+        if (outputShowHex) {
+            contentStr = entry.text.chunked(2).joinToString(" ")
+        } else {
+            val decoded = entry.text.hexToString(outputUseGbk).escapeDisplay()
+            contentStr = decoded
+        }
+        if (contentStr.isEmpty()) return null
+
+        val sb = SpannableStringBuilder()
+        val lineStart = sb.length
+        if (entry.timestampMs != null) {
+            val ts = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date(entry.timestampMs))
+            sb.append("[$ts] ")
+            sb.setSpan(ForegroundColorSpan(timestampColor), lineStart, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        val contentStart = sb.length
+        sb.append(contentStr)
+        sb.setSpan(
+            ForegroundColorSpan(if (entry.isTx) txColor else rxColor),
+            contentStart, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        return sb
+    }
+
+    /**
+     * 增量刷新输出 — 处理新条目递增追加到单显示缓冲区。
+     *
+     * ★ 核心优化：使用 outputText.append() 做增量布局，而非每次 setText()。
+     *    append() 仅触发新增内容的 measure/layout，不重建整棵 View 树。
+     *    仅在缓冲区超限裁剪时才做一次 setText()（罕见操作）。
+     *
+     * 连接时 batchSize=500 加速出流；断开时 batchSize=200 降低历史回看负载。
+     */
+    private fun rebuildOutputText() {
         val rxColor = android.graphics.Color.parseColor("#4FC3F7")
         val txColor = android.graphics.Color.parseColor("#FFB74D")
         val timestampColor = android.graphics.Color.parseColor("#9E9E9E")
 
-        val newSpannable = SpannableStringBuilder()
-        var hasNew = false
-        var needsClear = false
-        // 记录现有文本是否非空，用于判断是否需要前置换行
-        val existingTextNonEmpty = outputText.text.isNotEmpty()
-
+        // ★ 连接时更快出流，断开时保守以降低 CPU 占用
+        val batchSize = if (isConnected) 500 else 200
+        val chunk = SpannableStringBuilder()
+        val processedCount: Int
+        val hasMore: Boolean
         synchronized(outputDataEntries) {
-            // 若因条目被裁剪导致索引越界，触发全量重建
-            if (lastDisplayedEntryCount > outputDataEntries.size) {
-                lastDisplayedEntryCount = 0
-                needsClear = true
+            val pendingCount = outputDataEntries.size - lastDisplayedEntryCount
+            if (pendingCount <= 0) return
+
+            val batchEnd = minOf(lastDisplayedEntryCount + batchSize, outputDataEntries.size)
+
+            for (i in lastDisplayedEntryCount until batchEnd) {
+                val entry = outputDataEntries[i]
+                val display = buildEntryDisplay(entry, rxColor, txColor, timestampColor) ?: continue
+                if (chunk.isNotEmpty()) chunk.append('\n')
+                chunk.append(display)
             }
-
-            if (lastDisplayedEntryCount >= outputDataEntries.size) {
-                if (!needsClear) return
-            } else {
-                // 仅处理自上次刷新以来的新条目
-                for (i in lastDisplayedEntryCount until outputDataEntries.size) {
-                    val entry = outputDataEntries[i]
-                    if (!entry.visible) continue
-                    // ★ Rx/Tx 显示级过滤
-                    if ((entry.isTx && !outputTxHighlight) || (!entry.isTx && !outputRxHighlight)) continue
-                    // ★ 图像数据包显示级过滤
-                    if (!entry.isTx && entry.type == OutputType.IMAGE_PACKET && !rxShowImagePacket) continue
-                    // ★ 采样数据包显示级过滤
-                    if (!entry.isTx && entry.isSamplingData && !rxShowSampleData) continue
-
-                    // 计算显示内容
-                    val contentStr: String
-                    if (outputShowHex) {
-                        contentStr = entry.text.chunked(2).joinToString(" ")
-                    } else {
-                        // ★ 使用 outputUseGbk 决定编码，RawData 模式转义控制字符
-                        var decoded = entry.text.hexToString(outputUseGbk)
-                        if (entry.escapeControlChars) {
-                            decoded = decoded.escapeDisplay()
-                        }
-                        contentStr = decoded
-                    }
-                    if (contentStr.isEmpty()) continue
-
-                    // 处理条目间的换行：
-                    // - 第一个可见条目：如果现有文本已有内容，需要前置 \n
-                    // - 后续可见条目：始终前置 \n
-                    if (!hasNew) {
-                        if (existingTextNonEmpty) {
-                            newSpannable.append("\n")
-                        }
-                    } else {
-                        newSpannable.append("\n")
-                    }
-                    hasNew = true
-
-                    val lineStart = newSpannable.length
-                    // 时间戳
-                    if (entry.timestampMs != null) {
-                        val ts = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date(entry.timestampMs))
-                        newSpannable.append("[$ts] ")
-                        newSpannable.setSpan(ForegroundColorSpan(timestampColor),
-                            lineStart, newSpannable.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    }
-                    // contentStr 已在前面计算出并跳过空内容
-                    val contentStart = newSpannable.length
-                    newSpannable.append(contentStr)
-                    newSpannable.setSpan(ForegroundColorSpan(if (entry.isTx) txColor else rxColor),
-                        contentStart, newSpannable.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                }
-                lastDisplayedEntryCount = outputDataEntries.size
-            }
+            processedCount = batchEnd - lastDisplayedEntryCount
+            lastDisplayedEntryCount = batchEnd
+            hasMore = lastDisplayedEntryCount < outputDataEntries.size
         }
 
-        // UI 操作在同步块外执行
-        if (needsClear) {
-            outputText.text = ""
-            autoScrollEnabled = true
-            scrollToBottomBtn.visibility = View.GONE
+        if (chunk.isEmpty()) return
+
+        // ★ 增量构建新条目的显示文本，追加到显示缓冲区
+        if (displayBuffer.isNotEmpty()) {
+            displayBuffer.append('\n')
         }
-        if (hasNew) {
-            outputText.append(newSpannable)
-            // ★ 输出窗口显示文本独立体积上限，超限时截断前半部分
-            if (outputText.text.length > MAX_OUTPUT_TEXT_LENGTH) {
-                val text = outputText.text
-                val keep = text.length - MAX_OUTPUT_TEXT_LENGTH * 3 / 4
-                outputText.text = text.subSequence(keep, text.length)
-            }
-            // 自动滚动到底部（仅在用户未手动翻看历史时）
-            if (autoScrollEnabled) {
+        displayBuffer.append(chunk)
+        // ★ 裁剪旧行
+        val needTrim = displayBuffer.length > MAX_DISPLAY_CHARS
+        if (needTrim) {
+            trimDisplayBuffer()
+        }
+        // ★ 统一 setText() 同步到 TextView（单源可靠，避免 append() 双对象不同步崩溃）
+        outputText.setText(displayBuffer, android.widget.TextView.BufferType.SPANNABLE)
+
+        outputScrollView.invalidate()
+
+        // ★ 连接时始终自动滚动到底；断开时尊重 autoScrollEnabled
+        if (isConnected || autoScrollEnabled) {
+            outputScrollView.post {
                 outputScrollView.fullScroll(android.view.View.FOCUS_DOWN)
             }
-            outputScrollView.invalidate()
+        }
+
+        // ★ 若还有剩余条目，立即继续处理
+        if (hasMore) {
+            outputHandler.post(outputFlushRunnable)
         }
     }
 
+    /** 执行批量刷新 */
+    private fun doFlushOutput() {
+        outputFlushPending = false
+        rebuildOutputText()
+    }
+
     /**
-     * 全量重建输出显示 — 当设置（Hex/Abc、时间戳、Rx/Tx过滤）变化时调用
-     * 将 lastDisplayedEntryCount 置 0，由下次 doFlushOutput 触发全量重建
+     * 设置变化（Hex/Abc、时间戳、Rx/Tx 过滤）时触发重建。
+     * ★ 不清空全部再重建（阻塞主线程），而是清空缓冲区后让增量刷新
+     *    自然分批次重新构建（惰性加载），仅当前可见内容优先渲染。
      */
     private fun refreshOutputDisplay() {
-        synchronized(outputDataEntries) {
-            lastDisplayedEntryCount = 0
-        }
-        // 取消待处理的增量刷新，立即调度一次全量刷新
         outputHandler.removeCallbacks(outputFlushRunnable)
         outputFlushPending = false
-        outputHandler.post {
-            val rxColor = android.graphics.Color.parseColor("#4FC3F7")
-            val txColor = android.graphics.Color.parseColor("#FFB74D")
-            val timestampColor = android.graphics.Color.parseColor("#9E9E9E")
-
-            val spannable = SpannableStringBuilder()
-            val entries: List<OutputEntry>
-            synchronized(outputDataEntries) {
-                entries = outputDataEntries.toList()
-                lastDisplayedEntryCount = outputDataEntries.size
-            }
-
-            var firstVisible = true
-            for (entry in entries) {
-                if (!entry.visible) continue
-                // ★ Rx/Tx 显示级过滤
-                if ((entry.isTx && !outputTxHighlight) || (!entry.isTx && !outputRxHighlight)) continue
-                // ★ 图像数据包显示级过滤
-                if (!entry.isTx && entry.type == OutputType.IMAGE_PACKET && !rxShowImagePacket) continue
-                // ★ 采样数据包显示级过滤
-                if (!entry.isTx && entry.isSamplingData && !rxShowSampleData) continue
-
-                // 计算显示内容
-                val contentStr: String
-                if (outputShowHex) {
-                    contentStr = entry.text.chunked(2).joinToString(" ")
-                } else {
-                    // ★ 使用 outputUseGbk 决定编码，RawData 模式转义控制字符
-                    var decoded = entry.text.hexToString(outputUseGbk)
-                    if (entry.escapeControlChars) {
-                        decoded = decoded.escapeDisplay()
-                    }
-                    contentStr = decoded
-                }
-                if (contentStr.isEmpty()) continue
-
-                if (!firstVisible) spannable.append("\n")
-                firstVisible = false
-                val lineStart = spannable.length
-
-                // 时间戳
-                if (entry.timestampMs != null) {
-                    val ts = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date(entry.timestampMs))
-                    spannable.append("[$ts] ")
-                    spannable.setSpan(ForegroundColorSpan(timestampColor),
-                        lineStart, spannable.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                }
-
-                val contentStart = spannable.length
-                spannable.append(contentStr)
-                spannable.setSpan(ForegroundColorSpan(if (entry.isTx) txColor else rxColor),
-                    contentStart, spannable.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            }
-            outputText.text = spannable
-            // ★ 输出窗口显示文本独立体积上限
-            if (outputText.text.length > MAX_OUTPUT_TEXT_LENGTH) {
-                val text = outputText.text
-                val keep = text.length - MAX_OUTPUT_TEXT_LENGTH * 3 / 4
-                outputText.text = text.subSequence(keep, text.length)
-            }
-            if (autoScrollEnabled) {
-                outputScrollView.fullScroll(android.view.View.FOCUS_DOWN)
-            }
-            outputScrollView.invalidate()
-        }
+        displayBuffer.clear()
+        lastDisplayedEntryCount = 0
+        outputText.setText(displayBuffer, android.widget.TextView.BufferType.SPANNABLE)
+        scheduleOutputFlush()
     }
 
     // ====================== Rx 过滤菜单 ======================
@@ -2406,11 +2493,16 @@ class MainActivity : AppCompatActivity() {
         popup.showAsDropDown(btnRxDropdown, 0, -dpToPx(4)) // 紧贴按钮下方
     }
 
-    /** 跳转至最新行并恢复自动滚动 */
+    /** 跳转至最新行并恢复自动滚动（仅在断开状态下可用） */
     private fun scrollToLatestAndResume() {
         autoScrollEnabled = true
         scrollToBottomBtn.visibility = View.GONE
-        outputScrollView.jumpToBottom()
+        outputScrollView.invalidate()
+        outputScrollView.post {
+            outputScrollView.fullScroll(android.view.View.FOCUS_DOWN)
+            outputScrollView.thumbVisible = false
+            outputScrollView.invalidate()
+        }
     }
 
     private fun getProtocolName(position: Int): String = when (position) { 0 -> "串口"; 1 -> "UDP"; 2 -> "TCP客户端"; 3 -> "TCP服务端"; 4 -> "Demo"; else -> "未知" }
@@ -2426,8 +2518,8 @@ class MainActivity : AppCompatActivity() {
                     btn.alpha = 1f
                     AppLogger.i("MainActivity", "UDP 已断开")
                     showToastShort("UDP 已断开")
-                    // ★ 手動斷開時 UDP 的 disconnect() 不會觸發狀態監聽器的 connected=false，故在此解鎖
                     setDataEngineSpinnerEnabled(true)
+                    onConnectionStateChanged(false)
                 } else {
                     val ip = protocolView?.findViewById<EditText>(R.id.udpRemoteIp)?.text?.toString()
                         ?: panelConfig.udpRemoteIp
@@ -2450,8 +2542,8 @@ class MainActivity : AppCompatActivity() {
                         btn.setImageResource(R.drawable.ic_connect_on)
                         btn.alpha = 1f
                         showToastShort("UDP 已启动，本地端口: $localPort")
-                        // 连接建立 -> 锁定数据引擎 Spinner
                         setDataEngineSpinnerEnabled(false)
+                        onConnectionStateChanged(true)
                     }
                 }
             }
@@ -2466,6 +2558,7 @@ class MainActivity : AppCompatActivity() {
                     btn.alpha = 1f
                     AppLogger.i("MainActivity", "TCP客户端断开")
                     showToastShort(if (wasConnecting) "已取消连接" else "TCP客户端已断开")
+                    onConnectionStateChanged(false)
                 } else {
                     val ip = protocolView?.findViewById<EditText>(R.id.tcpClientServerIp)?.text?.toString()
                         ?: panelConfig.tcpClientServerIp
@@ -2498,8 +2591,8 @@ class MainActivity : AppCompatActivity() {
                     isConnected = false
                     btn.setImageResource(R.drawable.ic_connect_off)
                     showToastShort("TCP服务端已停止")
-                    // ★ disconnect() 内部 stop() 會觸發狀態監聽器的 connected=false，但爲了保險仍在此解鎖
                     setDataEngineSpinnerEnabled(true)
+                    onConnectionStateChanged(false)
                 } else {
                     val portStr = protocolView?.findViewById<EditText>(R.id.tcpServerListenPort)?.text?.toString()
                         ?: panelConfig.tcpServerListenPort
@@ -2517,31 +2610,49 @@ class MainActivity : AppCompatActivity() {
                         isConnected = true
                         btn.setImageResource(R.drawable.ic_connect_on)
                         showToastShort("TCP服务端已启动，端口: $port")
-                        // 连接建立 -> 锁定数据引擎 Spinner
                         setDataEngineSpinnerEnabled(false)
+                        onConnectionStateChanged(true)
                     } else {
                         showToastShort("启动失败，端口可能被占用")
                     }
                 }
             }
             else -> {
-                // ── 串口 / UDP / Demo（暂未实现具体连接，使用 NullTransceiver） ──
+                // ── 串口 / Demo（暂未实现具体连接，使用 NullTransceiver） ──
                 if (currentTransceiver.isConnected()) {
                     currentTransceiver.disconnect()
                     isConnected = false
                     btn.setImageResource(R.drawable.ic_connect_off)
                     showToastShort("${currentTransceiver.getProtocolName()} 已断开")
-                    // 连接断开 -> 解锁数据引擎 Spinner
                     setDataEngineSpinnerEnabled(true)
+                    onConnectionStateChanged(false)
                 } else {
                     if (currentTransceiver.connect()) {
                         isConnected = true
                         btn.setImageResource(R.drawable.ic_connect_on)
                         showToastShort("${currentTransceiver.getProtocolName()} 已连接")
-                        // 连接建立 -> 锁定数据引擎 Spinner
                         setDataEngineSpinnerEnabled(false)
+                        onConnectionStateChanged(true)
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * 连接/断开状态切换时统一处理滚动行为。
+     * - connected=true：锁定滚动、强制回到底部、隐藏跳底按钮、启用自动滚动
+     * - connected=false：解锁滚动、允许用户回看历史、数据停止涌入后显示跳底按钮
+     */
+    private fun onConnectionStateChanged(connected: Boolean) {
+        outputScrollView.scrollLocked = connected
+        if (connected) {
+            autoScrollEnabled = true
+            scrollToBottomBtn.visibility = View.GONE
+            outputScrollView.post {
+                outputScrollView.fullScroll(android.view.View.FOCUS_DOWN)
+                outputScrollView.thumbVisible = false
+                outputScrollView.invalidate()
             }
         }
     }
@@ -2559,6 +2670,7 @@ class MainActivity : AppCompatActivity() {
         imageBuffer.reset()
         updateParamHeaderTitle()
         refreshParamViews()
+        onConnectionStateChanged(false)
     }
 
     private fun showToast(msg: String) { Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }

@@ -34,8 +34,41 @@ class ParamBuffer {
     /** 参数名称列表 */
     val paramNames = mutableListOf<String>()
 
+    /** 最近一帧数据段的标题（无冒号），锁定后有效，为空表示无前缀 */
+    var lastPrefix: String = ""
+        private set
+
+    /** 用于 FPS 估算的接收时间戳队列（保存最近 ~500ms 的帧到达时间） */
+    private val frameTimestamps = java.util.ArrayDeque<Long>()
+
+    /** FPS 估算窗口（毫秒） */
+    private val fpsWindowMs = 1000L
+
+    /**
+     * 获取估算的 FPS。
+     * 统计最近 fpsWindowMs 毫秒内接收的有效数据帧数。
+     */
+    fun getEstimatedFps(): Int {
+        val now = System.currentTimeMillis()
+        val cutoff = now - fpsWindowMs
+        // 移除过期的时间戳
+        while (frameTimestamps.isNotEmpty() && frameTimestamps.peekFirst() < cutoff) {
+            frameTimestamps.pollFirst()
+        }
+        if (frameTimestamps.isEmpty()) return 0
+        // fps = count / windowSeconds
+        val windowSeconds = fpsWindowMs / 1000.0
+        return (frameTimestamps.size / windowSeconds).toInt().coerceAtLeast(0)
+    }
+
     /** 缓存条目 */
     private val entries = mutableListOf<ParamEntry>()
+
+    /** 每个 data 值的文本最大长度（不超过 int16 范围，-32768 共 6 位） */
+    private val maxValueLength = 6
+
+    /** 参数数量上限 */
+    private val maxParamCount = 32
 
     /** 最大缓存条目数 */
     private val maxEntries = 5000
@@ -83,10 +116,13 @@ class ParamBuffer {
         if (values.size != expectedCount) return false
 
         // ── 写入缓存 ──
-        entries.add(ParamEntry(System.currentTimeMillis(), values))
+        val now = System.currentTimeMillis()
+        entries.add(ParamEntry(now, values))
         if (entries.size > maxEntries) {
             entries.removeAt(0)
         }
+        // ★ 记录时间戳用于 FPS 估算
+        frameTimestamps.addLast(now)
         return true
     }
 
@@ -102,26 +138,47 @@ class ParamBuffer {
      * - 首次锁定时以前缀生成参数名称 prefix_ch0, prefix_ch1, ...
      */
     private fun parseFireWaterLine(line: String): List<String>? {
+        val values: List<String>
+        val prefix: String
+
         val colonIdx = line.indexOf(':')
-        if (colonIdx < 0) return null
+        if (colonIdx < 0) {
+            // ★ 无冒号：整行为逗号分隔的纯数值串（无前缀名称）
+            prefix = ""
+            val raw = line.trim()
+            if (raw.isEmpty()) return null
+            values = raw.split(',')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+        } else {
+            prefix = line.substring(0, colonIdx).trim()
+            // 数据段标题长度不应超过 16
+            if (prefix.length > 16) return null
+            // 跳过图片前导帧
+            if (prefix.equals("image", ignoreCase = true)) return null
+            // 跳过提示信息行（引擎输出的 [xxx] 格式）
+            if (prefix.startsWith("[")) return null
 
-        val prefix = line.substring(0, colonIdx).trim()
-        // 跳过图片前导帧
-        if (prefix.equals("image", ignoreCase = true)) return null
-        // 跳过提示信息行（引擎输出的 [xxx] 格式）
-        if (prefix.startsWith("[")) return null
+            val valuesStr = line.substring(colonIdx + 1).trim()
+            if (valuesStr.isEmpty()) return null
 
-        val valuesStr = line.substring(colonIdx + 1).trim()
-        if (valuesStr.isEmpty()) return null
+            values = valuesStr.split(',')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+        }
 
-        val values = valuesStr.split(',')
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
         if (values.isEmpty()) return null
+
+        // ★ 检查每个 data 值的文本长度（不超过 int16 范围，-32768 共 6 位）
+        if (values.any { it.length > maxValueLength }) return null
+
+        // ★ 检查参数数量是否合理（不超过上限）
+        if (values.size > maxParamCount) return null
 
         // 首次锁定时填充参数名称
         if (!isLocked) {
             paramNames.clear()
+            lastPrefix = prefix
             for (i in values.indices) {
                 paramNames.add("${prefix}_ch$i")
             }
@@ -154,9 +211,16 @@ class ParamBuffer {
             .filter { it.isNotEmpty() && it.toFloatOrNull() != null }
         if (values.isEmpty()) return null
 
+        // ★ 检查每个 data 值的文本长度（不超过 10 位，即 int32 范围）
+        if (values.any { it.length > maxValueLength }) return null
+
+        // ★ 检查参数数量是否合理（不超过上限）
+        if (values.size > maxParamCount) return null
+
         // 首次锁定时填充参数名称
         if (!isLocked) {
             paramNames.clear()
+            lastPrefix = ""
             for (i in values.indices) {
                 paramNames.add("ch$i")
             }
@@ -173,6 +237,8 @@ class ParamBuffer {
         isLocked = false
         expectedCount = 0
         paramNames.clear()
+        lastPrefix = ""
         entries.clear()
+        frameTimestamps.clear()
     }
 }

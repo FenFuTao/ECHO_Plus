@@ -44,23 +44,7 @@ class JustFloatEngine : DataEngine {
      * 在图片接收模式下，消耗缓冲区中可能残留的图片数据
      * （前一次 scanForFrames 中前导帧帧尾后的剩余数据）
      */
-    private fun consumeBufferAsImageData() {
-        val buf = buffer.toByteArray()
-        if (buf.isNotEmpty()) {
-            val remaining = imageSize - imageBytesReceived
-            val toConsume = minOf(buf.size, remaining)
-            if (toConsume > 0) {
-                imageDataBuffer.write(buf, 0, toConsume)
-                imageBytesReceived += toConsume
-            }
-            if (toConsume >= buf.size) {
-                buffer.reset()
-            } else {
-                buffer.reset()
-                buffer.write(buf, toConsume, buf.size - toConsume)
-            }
-        }
-    }
+    // consumeBufferAsImageData 已弃用，由 drainBufferForImage 取代
 
     /** 帧尾：{0x00, 0x00, 0x80, 0x7f} */
     private val frameTail = byteArrayOf(0x00, 0x00, 0x80.toByte(), 0x7f)
@@ -87,23 +71,10 @@ class JustFloatEngine : DataEngine {
 
         val results = mutableListOf<DataEngineOutput>()
 
-        // 如果正在接收图片数据
+        // ★ 图像接收模式：完全接管字节流，不经过 scanForFrames()
         if (imagePending) {
-            // 图像过滤开启时丢弃图片数据并重置
-            if (imagePacketFiltered) {
-                imagePending = false
-                imageBytesReceived = 0
-                imageDataBuffer.reset()
-                buffer.write(data)
-                results.addAll(scanForFrames(connectionId))
-                return results
-            }
-
-            // ★ 先消耗缓冲区中可能残留的图片数据（前一次 feed 中帧尾后的剩余数据）
-            consumeBufferAsImageData()
-
-            results.addAll(handleImageData(connectionId, data))
-            if (results.isNotEmpty()) return results
+            handleImageStream(connectionId, data, results)
+            return results
         }
 
         // 将新数据写入缓冲区
@@ -121,36 +92,86 @@ class JustFloatEngine : DataEngine {
         // 在缓冲区中搜索帧尾
         results.addAll(scanForFrames(connectionId))
 
+        // ★ 若 scanForFrames 中检测到图片前导帧，缓冲区残留的图像原始字节由 handleImageStream 接管
+        if (imagePending && buffer.size() > 0) {
+            handleImageStream(connectionId, ByteArray(0), results)
+        }
+
         return results
     }
 
     /**
-     * 处理图片数据接收
-     * @return 非空列表表示图片接收完成或出错
+     * 图像数据流处理 — 完全接管字节计数，不调用 scanForFrames()。
+     *
+     * 1. 消耗 buffer 中所有残留字节
+     * 2. 从新 data 中取足所需字节（imageSize - imageBytesReceived）
+     * 3. 超出图像大小的字节为溢出数据，仅在图像完整后交还 scanForFrames 处理
      */
-    private fun handleImageData(connectionId: String, data: ByteArray): List<DataEngineOutput> {
-        val results = mutableListOf<DataEngineOutput>()
-        val remaining = imageSize - imageBytesReceived
-        val toConsume = minOf(data.size, remaining)
+    private fun handleImageStream(connectionId: String, data: ByteArray, results: MutableList<DataEngineOutput>) {
+        // 1. 消耗缓冲区中所有字节（全为图像数据）
+        drainBufferForImage()
 
-        imageBytesReceived += toConsume
-        imageDataBuffer.write(data, 0, toConsume)
+        // 2. 消耗新数据中所需的字节
+        val needed = imageSize - imageBytesReceived
+        if (needed > 0 && data.isNotEmpty()) {
+            val fromData = minOf(data.size, needed)
+            if (!imagePacketFiltered) {
+                imageDataBuffer.write(data, 0, fromData)
+            }
+            imageBytesReceived += fromData
 
-        if (imageBytesReceived >= imageSize) {
-            // 图片数据接收完毕
-            results.addAll(buildImagePacketOutput(connectionId))
-            imagePending = false
-
-            // 处理多余的数据（图片之后可能紧跟新的一帧）
-            val extra = data.copyOfRange(toConsume, data.size)
-            if (extra.isNotEmpty()) {
-                buffer.write(extra)
+            // 3. 数据中超出图像部分的溢出字节 → 仅在图像完整时才有效
+            if (imageBytesReceived >= imageSize) {
+                finishImageForJustFloat(results)
+                val overflow = data.copyOfRange(fromData, data.size)
+                if (overflow.isNotEmpty()) {
+                    buffer.write(overflow)
+                    // ★ imagePending 已为 false，可安全调用 scanForFrames
+                    results.addAll(scanForFrames(connectionId))
+                }
+            }
+        } else if (imageBytesReceived >= imageSize) {
+            // 仅来自 buffer 的数据已使图像完整
+            finishImageForJustFloat(results)
+            // ★ 处理 drainBufferForImage 留在 buffer 中的溢出字节
+            if (buffer.size() > 0) {
                 results.addAll(scanForFrames(connectionId))
             }
         }
-        // 图片还在接收中，无需额外操作
-        return results
+        // 图像未完整：所有数据均已消耗为图像字节，等待下一次 feed
     }
+
+    /** 消耗缓冲区中所有字节作为图像数据 */
+    private fun drainBufferForImage() {
+        val buf = buffer.toByteArray()
+        if (buf.isEmpty()) return
+        buffer.reset()
+
+        val needed = imageSize - imageBytesReceived
+        val fromBuf = minOf(buf.size, needed)
+        if (fromBuf > 0) {
+            if (!imagePacketFiltered) {
+                imageDataBuffer.write(buf, 0, fromBuf)
+            }
+            imageBytesReceived += fromBuf
+        }
+        // 缓冲区超出所需（理论上不应发生，安全处理）
+        if (fromBuf < buf.size) {
+            buffer.write(buf, fromBuf, buf.size - fromBuf)
+        }
+    }
+
+    /** 完成图像接收，输出 IMAGE_PACKET，重置状态 */
+    private fun finishImageForJustFloat(results: MutableList<DataEngineOutput>) {
+        if (!imagePacketFiltered) {
+            results.addAll(buildImagePacketOutput(connectionId = ""))
+        }
+        imagePending = false
+        imageBytesReceived = 0
+        imageDataBuffer.reset()
+    }
+
+    // handleImageData 已弃用，由 handleImageStream 取代
 
     /**
      * 在缓冲区中扫描帧尾，提取完整的帧
@@ -167,22 +188,43 @@ class JustFloatEngine : DataEngine {
             val tailPos = indexOfFrameTail(buf, searchStart)
             if (tailPos < 0) break // 没有找到完整的帧
 
-            // 帧尾之前的数据是帧内容
-            val frameData = buf.copyOfRange(0, tailPos)
+            // ★ 检查是否存在连续第二个帧尾（图片前导帧标记：两个连续的 0x7F800000）
+            val hasDoubleTail = tailPos + 8 <= buf.size &&
+                buf[tailPos + 4].toInt() and 0xFF == 0x00 &&
+                buf[tailPos + 5].toInt() and 0xFF == 0x00 &&
+                buf[tailPos + 6].toInt() and 0xFF == 0x80 &&
+                buf[tailPos + 7].toInt() and 0xFF == 0x7f
 
-            if (frameData.isNotEmpty()) {
-                // 检查是否为图片前导帧
-                val isImagePreamble = checkImagePreamble(frameData)
+            if (hasDoubleTail) {
+                // ★ 存在双帧尾：尝试将包含两个帧尾的完整 28 字节作为图片前导帧解析
+                val preambleSize = tailPos + 8
+                val extendedFrame = buf.copyOfRange(0, preambleSize)
+                val isImagePreamble = checkImagePreamble(extendedFrame)
                 if (isImagePreamble != null) {
-                    // 图像过滤开启：跳过图片处理，将帧内容视为普通浮点数据
+                    // 图像过滤开启：跳过图片处理，将前导帧的 5 个 int 视为普通浮点数据
                     if (imagePacketFiltered) {
-                        val floatOutput = parseFloatFrame(frameData, connectionId)
-                        results.add(floatOutput)
-                        val remaining = buf.copyOfRange(tailPos + 4, buf.size)
+                        // 过滤模式：静默跳过前导帧和随后的图像数据
+                        imageId = isImagePreamble[0]
+                        imageSize = isImagePreamble[1]
+                        imageWidth = isImagePreamble[2]
+                        imageHeight = isImagePreamble[3]
+                        imageFormat = isImagePreamble[4]
+
+                        imagePending = true
+                        imageBytesReceived = 0
+
+                        // 移除前导帧（preambleSize 字节）
+                        val remaining = buf.copyOfRange(preambleSize, buf.size)
                         buffer.reset()
                         if (remaining.isNotEmpty()) buffer.write(remaining)
-                        if (buffer.size() >= 4) results.addAll(scanForFrames(connectionId))
-                        return results
+
+                        if (imageSize == 0) {
+                            imagePending = false
+                            searchStart = 0
+                            continue
+                        }
+
+                        return results // 等待图像数据到来后跳过
                     }
 
                     // 是图片前导帧
@@ -198,15 +240,10 @@ class JustFloatEngine : DataEngine {
                     imagePending = true
                     imageBytesReceived = 0
 
-                    results.add(
-                        DataEngineOutput(
-                            text = "[图片前导帧] ID=$imageId, SIZE=${imageSize}B, ${imageWidth}x$imageHeight, FORMAT=${getImageFormatName(imageFormat)}".encodeHex(),
-                            type = OutputType.IMAGE_PACKET
-                        )
-                    )
+                    // 前导帧信息由 buildImagePacketOutput() 统一输出
 
-                    // 帧尾之后的剩余数据
-                    val remaining = buf.copyOfRange(tailPos + 4, buf.size)
+                    // 两个帧尾之后的剩余数据（即紧随其后的图像原始数据）
+                    val remaining = buf.copyOfRange(preambleSize, buf.size)
                     buffer.reset()
                     if (remaining.isNotEmpty()) {
                         buffer.write(remaining)
@@ -216,17 +253,23 @@ class JustFloatEngine : DataEngine {
                     if (imageSize == 0) {
                         results.addAll(buildImagePacketOutput(connectionId))
                         imagePending = false
-                        // 继续扫描剩余数据
                         searchStart = 0
                         continue
                     }
 
                     return results // 等待图片数据到来
-                } else {
-                    // 普通浮点数据帧
-                    val floatOutput = parseFloatFrame(frameData, connectionId)
-                    results.add(floatOutput)
                 }
+                // 非前导帧的双帧尾 → 当作普通单帧尾数据处理
+                // 注：两个正常帧背靠背时，第一个帧尾后跟正常数据开头，几乎不可能全是 0x00,0x00,0x80,0x7f
+            }
+
+            // 普通单帧尾处理
+            val frameData = buf.copyOfRange(0, tailPos)
+
+            if (frameData.isNotEmpty()) {
+                // 普通浮点数据帧
+                val floatOutput = parseFloatFrame(frameData, connectionId)
+                results.add(floatOutput)
             }
 
             // 移除已处理的帧（帧内容 + 帧尾）
@@ -335,17 +378,18 @@ class JustFloatEngine : DataEngine {
             text = "ID=$imageId, SIZE=${imageSize}B, ${imageWidth}x$imageHeight, $formatName".encodeHex(),
             type = OutputType.IMAGE_PACKET
         ))
-        // 第 2 条：图像原始 hex 数据（仅前 32 字节，避免巨量字符串卡死显示区）
+        // 第 2 条：图像原始 hex 数据（标记为 isImageDataPayload 以避免进入显示区）
         val raw = imageDataBuffer.toByteArray()
         imageDataBuffer.reset()
-        val truncated = if (raw.size <= 32) {
+        val truncated = if (raw.size <= 16) {
             raw.joinToString("") { "%02X".format(it) }
         } else {
-            raw.take(32).joinToString("") { "%02X".format(it) } + "(...${raw.size}B total)"
+            raw.take(16).joinToString("") { "%02X".format(it) } + "(...${raw.size}B total)"
         }
         results.add(DataEngineOutput(
             text = truncated,
-            type = OutputType.IMAGE_PACKET
+            type = OutputType.IMAGE_PACKET,
+            isImageDataPayload = true
         ))
         return results
     }

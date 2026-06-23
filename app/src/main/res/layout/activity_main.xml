@@ -88,6 +88,40 @@
                         android:focusable="true" />
                 </LinearLayout>
 
+                <!-- 浅蓝色副标题栏：左侧信息 + 右侧 FPS -->
+                <LinearLayout
+                    android:id="@+id/paramSubHeader"
+                    android:layout_width="match_parent"
+                    android:layout_height="24dp"
+                    android:gravity="center_vertical"
+                    android:paddingStart="20dp"
+                    android:paddingEnd="20dp"
+                    android:background="#80B3E5FC"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:id="@+id/paramSubHeaderLeft"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textSize="12sp"
+                        android:textColor="#616161"
+                        android:singleLine="true" />
+
+                    <Space
+                        android:layout_width="0dp"
+                        android:layout_height="1dp"
+                        android:layout_weight="1" />
+
+                    <TextView
+                        android:id="@+id/paramSubHeaderFps"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="#616161"
+                        android:singleLine="true" />
+                </LinearLayout>
+
                 <ScrollView
                     android:id="@+id/paramScrollView"
                     android:layout_width="match_parent"

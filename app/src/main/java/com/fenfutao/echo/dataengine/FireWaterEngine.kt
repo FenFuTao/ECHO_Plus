@@ -42,45 +42,9 @@ class FireWaterEngine : DataEngine {
 
         val results = mutableListOf<DataEngineOutput>()
 
-        // 如果正在接收图片数据，直接追加到图片缓冲区
+        // ★ 图像接收模式：完全接管字节流，不经过 processBuffer()
         if (imagePending) {
-            // 图像过滤开启时丢弃图片数据并重置
-            if (imagePacketFiltered) {
-                imagePending = false
-                imageBytesReceived = 0
-                imageDataBuffer.reset()
-                buffer.write(data)
-                results.addAll(processBuffer(connectionId))
-                return results
-            }
-
-            // ★ 先消耗缓冲区中可能残留的图片数据（前一次 feed 中前导帧后的剩余数据）
-            consumeBufferAsImageData()
-
-            val remaining = imageSize - imageBytesReceived
-            val toConsume = minOf(data.size, remaining)
-
-            imageBytesReceived += toConsume
-            imageDataBuffer.write(data, 0, toConsume)
-
-            // 如果图片数据接收完毕
-            if (imageBytesReceived >= imageSize) {
-                results.addAll(buildImagePacketOutput(connectionId))
-                imagePending = false
-
-                // 处理多余的数据（图片之后可能紧跟新数据）
-                val extra = data.copyOfRange(toConsume, data.size)
-                if (extra.isNotEmpty()) {
-                    buffer.write(extra)
-                    results.addAll(processBuffer(connectionId))
-                }
-            } else {
-                // 图片数据接收中，还有剩余部分待接收
-                if (toConsume < data.size) {
-                    val extra = data.copyOfRange(toConsume, data.size)
-                    buffer.write(extra)
-                }
-            }
+            handleImageStream(connectionId, data, results)
             return results
         }
 
@@ -99,7 +63,85 @@ class FireWaterEngine : DataEngine {
         // 从缓冲区提取完整行并处理
         results.addAll(processBuffer(connectionId))
 
+        // ★ 若 processBuffer 中检测到图片前导帧，缓冲区残留的图像原始字节由 handleImageStream 接管
+        //    （图像前导帧与原始数据在同一 feed() 中到达的情况）
+        if (imagePending && buffer.size() > 0) {
+            handleImageStream(connectionId, ByteArray(0), results)
+        }
+
         return results
+    }
+
+    /**
+     * 图像数据流处理 — 完全接管字节计数，不调用 processBuffer()。
+     *
+     * 1. 消耗 buffer 中所有残留字节
+     * 2. 从新 data 中取足所需字节（imageSize - imageBytesReceived）
+     * 3. 超出图像大小的字节为溢出数据，仅在图像完整后交还 processBuffer 处理
+     */
+    private fun handleImageStream(connectionId: String, data: ByteArray, results: MutableList<DataEngineOutput>) {
+        // 1. 消耗缓冲区中所有字节（全为图像数据）
+        drainBufferForImage()
+
+        // 2. 消耗新数据中所需的字节
+        val needed = imageSize - imageBytesReceived
+        if (needed > 0 && data.isNotEmpty()) {
+            val fromData = minOf(data.size, needed)
+            if (!imagePacketFiltered) {
+                imageDataBuffer.write(data, 0, fromData)
+            }
+            imageBytesReceived += fromData
+
+            // 3. 数据中超出图像部分的溢出字节 → 仅在图像完整时才有效
+            if (imageBytesReceived >= imageSize) {
+                finishImageForFireWater(results)
+                val overflow = data.copyOfRange(fromData, data.size)
+                if (overflow.isNotEmpty()) {
+                    buffer.write(overflow)
+                    // ★ imagePending 已为 false，可安全调用 processBuffer
+                    results.addAll(processBuffer(connectionId))
+                }
+            }
+        } else if (imageBytesReceived >= imageSize) {
+            // 仅来自 buffer 的数据已使图像完整
+            finishImageForFireWater(results)
+            // ★ 处理 drainBufferForImage 留在 buffer 中的溢出字节
+            //   （当 buffer 中的字节数超过 imageSize 时，多余字节被 drainBufferForImage 写回 buffer）
+            if (buffer.size() > 0) {
+                results.addAll(processBuffer(connectionId))
+            }
+        }
+        // 图像未完整：所有数据均已消耗为图像字节，等待下一次 feed
+    }
+
+    /** 消耗缓冲区中所有字节作为图像数据 */
+    private fun drainBufferForImage() {
+        val buf = buffer.toByteArray()
+        if (buf.isEmpty()) return
+        buffer.reset()
+
+        val needed = imageSize - imageBytesReceived
+        val fromBuf = minOf(buf.size, needed)
+        if (fromBuf > 0) {
+            if (!imagePacketFiltered) {
+                imageDataBuffer.write(buf, 0, fromBuf)
+            }
+            imageBytesReceived += fromBuf
+        }
+        // 缓冲区超出所需（理论上不应发生，安全处理）
+        if (fromBuf < buf.size) {
+            buffer.write(buf, fromBuf, buf.size - fromBuf)
+        }
+    }
+
+    /** 完成图像接收，输出 IMAGE_PACKET，重置状态 */
+    private fun finishImageForFireWater(results: MutableList<DataEngineOutput>) {
+        if (!imagePacketFiltered) {
+            results.addAll(buildImagePacketOutput(connectionId = ""))
+        }
+        imagePending = false
+        imageBytesReceived = 0
+        imageDataBuffer.reset()
     }
 
     /**
@@ -132,7 +174,9 @@ class FireWaterEngine : DataEngine {
                     val parsed = parseLine(connectionId, line, lineBytes)
                     results.addAll(parsed)
                 }
+                // ★ 必须在 break 前更新 lastCut，确保缓冲区仅保留图像原始字节
                 lastCut = i
+                if (imagePending) break
             } else {
                 i++
             }
@@ -153,26 +197,29 @@ class FireWaterEngine : DataEngine {
     private fun String.encodeHex(): String =
         this.toByteArray(Charsets.UTF_8).joinToString("") { "%02X".format(it) }
 
+    // consumeBufferAsImageData 已弃用，由 drainBufferForImage 取代
+
     /**
-     * 在图片接收模式下，消耗缓冲区中可能残留的图片数据
-     * （前一次 feed 中前导帧换行符之后的数据）
+     * 判断一行文本是否为有效的 FireWater 文本行。
+     *
+     * 排除连接中断/卡顿时产生的二进制垃圾数据：
+     * 1. 包含 U+FFFD（UTF-8 替换字符）→ 无效 UTF-8 字节
+     * 2. 非 ASCII 可打印字符占比过高 → 非文本
      */
-    private fun consumeBufferAsImageData() {
-        val buf = buffer.toByteArray()
-        if (buf.isNotEmpty()) {
-            val remaining = imageSize - imageBytesReceived
-            val toConsume = minOf(buf.size, remaining)
-            if (toConsume > 0) {
-                imageDataBuffer.write(buf, 0, toConsume)
-                imageBytesReceived += toConsume
-            }
-            if (toConsume >= buf.size) {
-                buffer.reset()
-            } else {
-                buffer.reset()
-                buffer.write(buf, toConsume, buf.size - toConsume)
-            }
+    private fun isValidTextLine(line: String, lineBytes: ByteArray): Boolean {
+        // 条件 1：包含替换字符 → 原始字节不是有效 UTF-8
+        if (line.contains('\uFFFD')) return false
+
+        // 条件 2：统计可打印 ASCII 字符比例
+        //   可打印 ASCII: 0x20~0x7E，加上常用控制符 \t(0x09) \n(0x0A) \r(0x0D)
+        val printableCount = lineBytes.count { b ->
+            val u = b.toInt() and 0xFF
+            (u >= 0x20 && u <= 0x7E) || u == 0x09 || u == 0x0A || u == 0x0D
         }
+        // 可打印 ASCII 占比 < 60% → 判定为二进制数据
+        if (lineBytes.isNotEmpty() && (printableCount.toFloat() / lineBytes.size) < 0.6f) return false
+
+        return true
     }
 
     /**
@@ -183,12 +230,6 @@ class FireWaterEngine : DataEngine {
 
         // 检测图片前导帧
         if (line.startsWith("image:")) {
-            // 图像过滤开启：将 image: 行视为普通 CSV 数据
-            if (imagePacketFiltered) {
-                results.add(DataEngineOutput(text = line.encodeHex()))
-                return results
-            }
-
             val parts = line.removePrefix("image:").split(",")
             if (parts.size >= 5) {
                 try {
@@ -205,12 +246,10 @@ class FireWaterEngine : DataEngine {
                     imagePending = true
                     imageBytesReceived = 0
 
-                    results.add(
-                        DataEngineOutput(
-                            text = "[图片前导帧] ID=$imageId, SIZE=${imageSize}B, ${imageWidth}x$imageHeight, FORMAT=$imageFormat".encodeHex(),
-                            type = OutputType.IMAGE_PACKET
-                        )
-                    )
+                    // 图像过滤开启时不输出任何内容（静默跳过图像字节）
+                    if (!imagePacketFiltered) {
+                        // 前导帧信息由 buildImagePacketOutput() 统一输出
+                    }
                 } catch (e: NumberFormatException) {
                     results.add(
                         DataEngineOutput(text = "[图片解析失败]".encodeHex())
@@ -222,6 +261,9 @@ class FireWaterEngine : DataEngine {
                 )
             }
         } else {
+            // ★ 过滤：跳过二进制垃圾数据
+            if (!isValidTextLine(line, lineBytes)) return emptyList()
+
             // 普通 CSV 数据行 — 仅传数据内容
             results.add(
                 DataEngineOutput(text = line.encodeHex())
@@ -242,17 +284,18 @@ class FireWaterEngine : DataEngine {
             text = "ID=$imageId, SIZE=${imageSize}B, ${imageWidth}x$imageHeight, $formatName".encodeHex(),
             type = OutputType.IMAGE_PACKET
         ))
-        // 第 2 条：图像原始 hex 数据（仅前 32 字节，避免巨量字符串卡死显示区）
+        // 第 2 条：图像原始 hex 数据（仅前 16 字节，标记为 isImageDataPayload 以避免进入显示区）
         val raw = imageDataBuffer.toByteArray()
         imageDataBuffer.reset()
-        val truncated = if (raw.size <= 32) {
+        val truncated = if (raw.size <= 16) {
             raw.joinToString("") { "%02X".format(it) }
         } else {
-            raw.take(32).joinToString("") { "%02X".format(it) } + "(...${raw.size}B total)"
+            raw.take(16).joinToString("") { "%02X".format(it) } + "(...${raw.size}B total)"
         }
         results.add(DataEngineOutput(
             text = truncated,
-            type = OutputType.IMAGE_PACKET
+            type = OutputType.IMAGE_PACKET,
+            isImageDataPayload = true
         ))
         return results
     }

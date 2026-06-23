@@ -44,7 +44,12 @@ data class DataEngineOutput(
      * 是否需要对显示文本中的控制字符（\n \r \t 等）进行转义显示。
      * RawData 模式下为 true，FireWater / JustFloat 下为 false。
      */
-    val escapeControlChars: Boolean = false
+    val escapeControlChars: Boolean = false,
+    /**
+     * 是否为图像原始数据载荷（原始 hex 数据）。
+     * 为 true 时仅进入 ImageBuffer，不应在显示区渲染。
+     */
+    val isImageDataPayload: Boolean = false
 )
 
 /** 输出类型 */
