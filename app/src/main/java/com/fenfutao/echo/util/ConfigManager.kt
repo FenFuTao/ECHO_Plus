@@ -38,6 +38,12 @@ data class PanelConfig(
     // ── Rx 过滤 ──
     var rxShowSampleData: Boolean = true,
     var rxShowImagePacket: Boolean = true,
+    var rxShowImageWindow: Boolean = true,
+    // ── 图像子窗口位置与尺寸（冷保存）──
+    var imageWindowPosX: Int = -1,
+    var imageWindowPosY: Int = -1,
+    var imageWindowWidth: Int = -1,
+    var imageWindowHeight: Int = -1,
 
     // ── 发送区工具栏 ──
     var sendHexMode: Boolean = false,
@@ -75,6 +81,11 @@ data class PanelConfig(
         outputUseGbk = def.outputUseGbk
         rxShowSampleData = def.rxShowSampleData
         rxShowImagePacket = def.rxShowImagePacket
+        rxShowImageWindow = def.rxShowImageWindow
+        imageWindowPosX = def.imageWindowPosX
+        imageWindowPosY = def.imageWindowPosY
+        imageWindowWidth = def.imageWindowWidth
+        imageWindowHeight = def.imageWindowHeight
 
         sendHexMode = def.sendHexMode
         sendLineEndingSelection = def.sendLineEndingSelection
@@ -116,6 +127,11 @@ data class PanelConfig(
                     outputUseGbk = it.optBoolean("outputUseGbk", d.outputUseGbk)
                     rxShowSampleData = it.optBoolean("rxShowSampleData", d.rxShowSampleData)
                     rxShowImagePacket = it.optBoolean("rxShowImagePacket", d.rxShowImagePacket)
+                    rxShowImageWindow = it.optBoolean("rxShowImageWindow", d.rxShowImageWindow)
+                    imageWindowPosX = it.optInt("imageWindowPosX", d.imageWindowPosX)
+                    imageWindowPosY = it.optInt("imageWindowPosY", d.imageWindowPosY)
+                    imageWindowWidth = it.optInt("imageWindowWidth", d.imageWindowWidth)
+                    imageWindowHeight = it.optInt("imageWindowHeight", d.imageWindowHeight)
 
                     sendHexMode = it.optBoolean("sendHexMode", d.sendHexMode)
                     sendLineEndingSelection = it.optInt("sendLineEndingSelection", d.sendLineEndingSelection)
@@ -153,6 +169,11 @@ data class PanelConfig(
         put("outputUseGbk", outputUseGbk)
         put("rxShowSampleData", rxShowSampleData)
         put("rxShowImagePacket", rxShowImagePacket)
+        put("rxShowImageWindow", rxShowImageWindow)
+        put("imageWindowPosX", imageWindowPosX)
+        put("imageWindowPosY", imageWindowPosY)
+        put("imageWindowWidth", imageWindowWidth)
+        put("imageWindowHeight", imageWindowHeight)
 
         put("sendHexMode", sendHexMode)
         put("sendLineEndingSelection", sendLineEndingSelection)

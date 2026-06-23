@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -30,15 +30,24 @@
                 android:textStyle="bold" />
         </LinearLayout>
 
-        <!-- 图像 复选框 -->
+        <!-- 图像 蓝色小标题（参考协议页"数据引擎"） -->
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:paddingStart="16dp" android:paddingEnd="16dp"
+            android:paddingTop="8dp" android:paddingBottom="2dp"
+            android:text="@string/control_image"
+            android:textColor="#FF15599A" android:textSize="15sp" android:textStyle="bold" />
+
+        <!-- 图像开关行（参考协议页"通信协议文档"提示行） -->
         <LinearLayout
             android:id="@+id/controlImageRow"
             android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:gravity="center_vertical"
+            android:layout_height="wrap_content"
             android:orientation="horizontal"
+            android:gravity="center_vertical"
             android:paddingStart="16dp"
             android:paddingEnd="16dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
             android:clickable="true"
             android:focusable="true">
 
@@ -54,26 +63,130 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/control_image"
-                android:textColor="#424242"
-                android:textSize="15sp"
+                android:textColor="#757575"
+                android:textSize="13sp"
                 android:layout_marginStart="12dp" />
+        </LinearLayout>
+
+        <!-- 图像信息显示面板 -->
+        <LinearLayout
+            android:id="@+id/controlImageInfoPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/controlImageInfoText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="13sp"
+                android:textColor="#9E9E9E"
+                android:lineSpacingExtra="4dp" />
+
+            <LinearLayout
+                android:id="@+id/controlImageResetRow"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="0dp"
+                android:paddingEnd="0dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?android:attr/selectableItemBackground">
+
+                <TextView
+                    android:id="@+id/controlImageResetBtn"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/control_image_reset"
+                    android:textColor="#757575"
+                    android:textSize="13sp"
+                    android:clickable="false"
+                    android:focusable="false" />
+
+                <Space
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text=">"
+                    android:textColor="#BDBDBD"
+                    android:textSize="17sp" />
+            </LinearLayout>
+
+            <!-- 保存图像 -->
+            <LinearLayout
+                android:id="@+id/controlImageSaveRow"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="0dp"
+                android:paddingEnd="0dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?android:attr/selectableItemBackground">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/control_image_save"
+                    android:textColor="#757575"
+                    android:textSize="13sp"
+                    android:clickable="false"
+                    android:focusable="false" />
+
+                <Space
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text=">"
+                    android:textColor="#BDBDBD"
+                    android:textSize="17sp" />
+            </LinearLayout>
         </LinearLayout>
 
         <!-- 分割线 -->
         <View
             android:layout_width="match_parent"
             android:layout_height="1dp"
-            android:background="#E0E0E0" />
+            android:background="#E0E0E0"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="8dp" />
 
-        <!-- 波形图 复选框 -->
+        <!-- 波形图 蓝色小标题 -->
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:paddingStart="16dp" android:paddingEnd="16dp"
+            android:paddingTop="8dp" android:paddingBottom="2dp"
+            android:text="@string/control_waveform"
+            android:textColor="#FF15599A" android:textSize="15sp" android:textStyle="bold" />
+
+        <!-- 波形图开关行 -->
         <LinearLayout
             android:id="@+id/controlWaveformRow"
             android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:gravity="center_vertical"
+            android:layout_height="wrap_content"
             android:orientation="horizontal"
+            android:gravity="center_vertical"
             android:paddingStart="16dp"
             android:paddingEnd="16dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
             android:clickable="true"
             android:focusable="true">
 
@@ -89,16 +202,20 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/control_waveform"
-                android:textColor="#424242"
-                android:textSize="15sp"
+                android:textColor="#757575"
+                android:textSize="13sp"
                 android:layout_marginStart="12dp" />
         </LinearLayout>
 
-        <!-- 分割线 -->
+        <!-- 底部分割线 -->
         <View
             android:layout_width="match_parent"
             android:layout_height="1dp"
-            android:background="#E0E0E0" />
+            android:background="#E0E0E0"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="8dp" />
 
     </LinearLayout>
 </ScrollView>

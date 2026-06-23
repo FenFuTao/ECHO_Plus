@@ -25,7 +25,8 @@
                 android:layout_width="match_parent" android:layout_height="0dp"
                 android:layout_weight="1"
                 android:background="#F5F5F5" android:padding="4dp">
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                <TextView android:id="@+id/plotTitle"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:layout_gravity="top|start" android:text="@string/plot_title"
                     android:textColor="#9E9E9E" android:textSize="12sp" />
             </FrameLayout>

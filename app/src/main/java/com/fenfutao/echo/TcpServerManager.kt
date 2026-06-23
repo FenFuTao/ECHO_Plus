@@ -72,13 +72,20 @@ class TcpServerManager {
         this.rawDataListener = listener
     }
 
-    /** 获取当前所有已连接客户端的 IP 地址列表（按连接顺序） */
-    fun getClientAddresses(): List<String> = clientSockets.mapNotNull { socket ->
-        try {
-            socket.inetAddress?.hostAddress ?: "未知"
-        } catch (_: Exception) {
-            null
+    /** 获取当前所有已连接客户端的 IP 地址列表（去重，按连接顺序） */
+    fun getClientAddresses(): List<String> {
+        val seen = mutableSetOf<String>()
+        val result = mutableListOf<String>()
+        for (socket in clientSockets) {
+            val addr = try {
+                socket.inetAddress?.hostAddress ?: "未知"
+            } catch (_: Exception) { null } ?: continue
+            if (addr !in seen) {
+                seen.add(addr)
+                result.add(addr)
+            }
         }
+        return result
     }
 
     fun isRunning(): Boolean = isRunning
@@ -146,6 +153,17 @@ class TcpServerManager {
         while (isRunning) {
             try {
                 val client = serverSocket?.accept() ?: break
+                val newIp = try { client.inetAddress?.hostAddress } catch (_: Exception) { null }
+                // ★ 同 IP 重连：替换旧 Socket（断开又重连时去重）
+                if (newIp != null) {
+                    val oldSocket = clientSockets.find { s ->
+                        try { s.inetAddress?.hostAddress == newIp } catch (_: Exception) { false }
+                    }
+                    if (oldSocket != null) {
+                        clientSockets.remove(oldSocket)
+                        try { oldSocket.close() } catch (_: Exception) {}
+                    }
+                }
                 clientSockets.add(client)
                 updateConnectionCount()
                 updateConnectionList()

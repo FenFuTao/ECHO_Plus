@@ -42,3 +42,5 @@ gradle/gradle-daemon-jvm.properties
 # ── OS files ──
 Thumbs.db
 Desktop.ini
+tmp/
+.vscode/

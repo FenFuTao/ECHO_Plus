@@ -49,7 +49,16 @@ data class DataEngineOutput(
      * 是否为图像原始数据载荷（原始 hex 数据）。
      * 为 true 时仅进入 ImageBuffer，不应在显示区渲染。
      */
-    val isImageDataPayload: Boolean = false
+        val isImageDataPayload: Boolean = false,
+        /** 图像原始字节数据（完整，未经截断）。
+         * 仅 IMAGE_PACKET 类型的数据载荷设置此字段。 */
+        val rawImageBytes: ByteArray? = null,
+        /** 图像宽度（像素），由引擎从图像前导帧解析 */
+        val imageWidth: Int = 0,
+        /** 图像高度（像素），由引擎从图像前导帧解析 */
+        val imageHeight: Int = 0,
+        /** 图像格式枚举值（与 VOFA+ 一致，Grayscale8=24） */
+        val imageFormat: Int = 0
 )
 
 /** 输出类型 */

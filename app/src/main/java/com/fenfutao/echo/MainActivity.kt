@@ -1,4 +1,4 @@
-package com.fenfutao.echo
+﻿package com.fenfutao.echo
 
 import android.os.Build
 import android.os.Bundle
@@ -8,6 +8,7 @@ import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.util.TypedValue
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -39,6 +40,8 @@ import com.fenfutao.echo.dataengine.JustFloatEngine
 import com.fenfutao.echo.dataengine.RawDataEngine
 import com.fenfutao.echo.dataengine.ParamBuffer
 import com.fenfutao.echo.dataengine.ImageBuffer
+import com.fenfutao.echo.dataengine.ImageFrame
+import java.io.File
 import com.fenfutao.echo.transceiver.DataTransceiver
 import com.fenfutao.echo.transceiver.NullTransceiver
 import com.fenfutao.echo.transceiver.TcpClientTransceiver
@@ -63,6 +66,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var menuBar: View
     private lateinit var leftPanel: LinearLayout
     private lateinit var plotContainer: FrameLayout
+    private var glImageView: GLImageView? = null
+    /** 图像显示子窗口容器（可拖动） */
+    private var imageWindowContainer: FrameLayout? = null
+    private lateinit var plotTitle: TextView
     private lateinit var outputContainer: FrameLayout
     private lateinit var paramsContainer: FrameLayout
     private lateinit var menuBarHighlight: View
@@ -161,6 +168,10 @@ class MainActivity : AppCompatActivity() {
     private var rxShowImagePacket: Boolean
         get() = panelConfig.rxShowImagePacket
         set(v) { panelConfig.rxShowImagePacket = v; ConfigManager.saveConfig(panelConfig) }
+    /** 图像子窗口显示开关（控制页"图像"复选框控制） */
+    private var rxShowImageWindow: Boolean
+        get() = panelConfig.rxShowImageWindow
+        set(v) { panelConfig.rxShowImageWindow = v; ConfigManager.saveConfig(panelConfig) }
 
     private lateinit var btnFontInc: android.view.View
     private lateinit var btnFontDec: android.view.View
@@ -203,9 +214,17 @@ class MainActivity : AppCompatActivity() {
         private const val CONTROL_MENU_MARKER = -3
         // ── 分割面板最小尺寸 (dp) ──
         private const val MIN_PLOT_HEIGHT_DP = 80
-        private const val MIN_OUTPUT_HEIGHT_DP = 80
-        private const val MIN_LEFT_WIDTH_DP = 166 // plot(80) + divider(6) + output(80)
-        private const val MIN_RIGHT_WIDTH_DP = 80
+        // 宽模式: toolbar(40) + 2行文本(~32) + sendBar(40) = 112
+        private const val MIN_OUTPUT_HEIGHT_DP = 112
+        private const val MIN_LEFT_WIDTH_DP = 166 // plot(80) + divider(6) + output(112)
+        // 宽模式: checkbox(18) + margin(10) + I0标签(60) + margin(8) + 数值128.000000(~106) + padding(32) ≈ 250
+        // 窄模式: checkbox(16) + margin(8) + I0标签(48) + margin(6) + 数值128.000000(~85) + padding(24) ≈ 187
+        private const val MIN_RIGHT_WIDTH_DP = 200
+        // ── 输出区工具栏高度 (dp)，随界面尺寸切换 ──
+        private const val TOOLBAR_HEIGHT_NARROW = 28
+        private const val TOOLBAR_HEIGHT_WIDE = 40
+        private const val SENDBAR_HEIGHT_NARROW = 28
+        private const val SENDBAR_HEIGHT_WIDE = 40
         /** 分割线拖拽刷新防抖间隔 (ms) */
         private const val LAYOUT_REFRESH_INTERVAL_MS = 16L // ~60fps
         /** 输出窗口后台数据缓冲最大条目数 */
@@ -300,25 +319,55 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // 延时切换主题，让闪屏（Theme.ECHO.Splash）停留更久
+        setTheme(R.style.Theme_ECHO)
+        setContentView(R.layout.activity_main)
+        enableImmersiveMode()
+        initViews()
+        initTransceivers()
+        setupOutputView()
+        applyColors()
+        applyPanelConfig()
+        applyMenuBarLayout()
+        setupButtons()
+        setupDividers()
+        navA.translationX = -getMenuPx(); navA.visibility = View.GONE
+        navB.translationX = -getMenuPx(); navB.visibility = View.GONE
+        scrimOverlay.setOnClickListener { closeMenu() }
+        workArea.setOnClickListener { if (isMenuOpen) closeMenu() }
+        enableDoubleBackExit()
+
+        // ── 闪屏淡出动画：先死等 0.5s，再在 1s 内淡出 ──
+        val rootGroup = rootContainer as android.widget.FrameLayout
+        val splashOverlay = View(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            setBackgroundResource(R.drawable.splash_background)
+            isClickable = true
+            isFocusable = true
+        }
+        rootGroup.addView(splashOverlay)
         Handler(Looper.getMainLooper()).postDelayed({
-            setTheme(R.style.Theme_ECHO)
-            setContentView(R.layout.activity_main)
-            enableImmersiveMode()
-            initViews()
-            initTransceivers()
-            setupOutputView()
-            applyColors()
-            applyPanelConfig()
-            applyMenuBarLayout()
-            setupButtons()
-            setupDividers()
-            navA.translationX = -getMenuPx(); navA.visibility = View.GONE
-            navB.translationX = -getMenuPx(); navB.visibility = View.GONE
-            scrimOverlay.setOnClickListener { closeMenu() }
-            workArea.setOnClickListener { if (isMenuOpen) closeMenu() }
-            enableDoubleBackExit()
-        }, 1000L)
+            splashOverlay.animate()
+                .alpha(0f)
+                .setDuration(1000L)
+                .withEndAction {
+                    rootGroup.removeView(splashOverlay)
+                }
+                .start()
+        }, 500L)
+
+        // ── 窄模式下缩小右侧数据区标题栏 ──
+        if (panelConfig.menuBarWidthDp < 56) {
+            val header = findViewById<android.widget.LinearLayout>(R.id.paramHeader)
+            header.layoutParams = (header.layoutParams as android.widget.LinearLayout.LayoutParams).apply { height = dpToPx(36) }
+            findViewById<android.widget.TextView>(R.id.paramHeaderTitle).textSize = 14f
+            val subHeader = findViewById<android.widget.LinearLayout>(R.id.paramSubHeader)
+            subHeader.layoutParams = (subHeader.layoutParams as android.widget.LinearLayout.LayoutParams).apply { height = dpToPx(20) }
+            findViewById<android.widget.TextView>(R.id.paramSubHeaderLeft).textSize = 11f
+            findViewById<android.widget.TextView>(R.id.paramSubHeaderFps).textSize = 11f
+        }
     }
 
     private fun initViews() {
@@ -328,6 +377,7 @@ class MainActivity : AppCompatActivity() {
         menuBar = findViewById(R.id.menuBar)
         leftPanel = findViewById(R.id.leftPanel)
         plotContainer = findViewById(R.id.plotContainer)
+        plotTitle = findViewById(R.id.plotTitle)
         outputContainer = findViewById(R.id.outputContainer)
         paramsContainer = findViewById(R.id.paramsContainer)
         menuBarHighlight = findViewById(R.id.menuBarHighlight)
@@ -371,6 +421,7 @@ class MainActivity : AppCompatActivity() {
                     imageBuffer.reset()
                     updateParamHeaderTitle()
                     refreshParamViews()
+                    updateImageInfo()
                     showToastShort("参数缓存已清除，等待新数据重新锁定")
                 }
                 .setPositiveButton("取消", null)
@@ -428,12 +479,19 @@ class MainActivity : AppCompatActivity() {
         val names = paramBuffer.paramNames
         val values = latest.values
 
+        val isWide = panelConfig.menuBarWidthDp >= 56
+        // 窄模式下缩小参数列表容器内边距
+        if (!isWide) {
+            val scrollView = findViewById<View>(R.id.paramScrollView)
+            scrollView.setPadding(dpToPx(12), dpToPx(6), dpToPx(12), 0)
+        }
         val density = resources.displayMetrics.density
-        val inWidth = (60 * density).toInt()
-        val paddingH = (8 * density).toInt()
-        val paddingV = (6 * density).toInt()
-        val checkboxSize = (18 * density).toInt()
-        val checkboxMarginEnd = (10 * density).toInt()
+        val inWidth = ((if (isWide) 60 else 48) * density).toInt()
+        val paddingH = ((if (isWide) 8 else 6) * density).toInt()
+        val paddingV = ((if (isWide) 6 else 4) * density).toInt()
+        val checkboxSize = ((if (isWide) 18 else 16) * density).toInt()
+        val checkboxMarginEnd = ((if (isWide) 10 else 8) * density).toInt()
+        val dataTextSize = if (isWide) 18f else 15f
 
         for (i in 0 until minOf(names.size, values.size)) {
             val color = android.graphics.Color.parseColor(PARAM_COLORS[i % PARAM_COLORS.size])
@@ -473,7 +531,7 @@ class MainActivity : AppCompatActivity() {
             // In{序号}
             val labelView = TextView(this).apply {
                 text = "I$i"
-                textSize = 18f
+                textSize = dataTextSize
                 setTextColor(color)
                 layoutParams = LinearLayout.LayoutParams(inWidth, LinearLayout.LayoutParams.WRAP_CONTENT)
                 gravity = android.view.Gravity.START
@@ -491,7 +549,7 @@ class MainActivity : AppCompatActivity() {
                     raw
                 }
                 text = formatted
-                textSize = 18f
+                textSize = dataTextSize
                 setTextColor(color)
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
                     marginStart = paddingH
@@ -609,18 +667,29 @@ class MainActivity : AppCompatActivity() {
     private fun setupDataEngineForTransceiver(transceiver: DataTransceiver, connectionName: String) {
         transceiver.setOnRawDataReceivedListener { data ->
             // ★ 引擎始终处理数据（ParamBuffer/ImageBuffer 不受 Rx 开关影响），
-            //    Rx 关闭时仅跳过 appendOutput 进入输出显示区。
+            //    Rx 开关仅控制输出窗口的显示。
             val rxEnabled = outputRxHighlight
 
-            val outputs = if (rxEnabled) {
-                currentDataEngine.feed(connectionName, data)
-            } else {
-                // Rx 关闭时仍需要 feed 引擎以便 ParamBuffer 能锁定/接收数据帧
-                currentDataEngine.feed(connectionName, data)
-            }
+            val outputs = currentDataEngine.feed(connectionName, data)
             val engineName = currentDataEngine.getEngineName()
 
             for (output in outputs) {
+                // ── 图像数据包处理（不受 Rx 开关影响，始终进入 ImageBuffer）──
+                if (output.type == OutputType.IMAGE_PACKET) {
+                    val isDataPayload = imageBuffer.isCollecting
+                    imageBuffer.feed(output.text, output.rawImageBytes,
+                        output.imageWidth, output.imageHeight, output.imageFormat)
+                    if (isDataPayload) {
+                        // ★ 新图像帧数据载荷完成 → 触发 GPU 渲染
+                        checkAndDisplayImage()
+                    }
+                    // 前导帧：根据显示开关决定是否进入输出显示区
+                    if (!isDataPayload && outputRxHighlight && rxShowImagePacket) {
+                        appendOutput(output.text, false, output.escapeControlChars, output.type)
+                    }
+                    continue
+                }
+
                 // ── 判断是否为合规采样数据帧 ──
                 // RawData 引擎的 TEXT 不计入；仅 FireWater/JustFloat 的 TEXT 类型
                 // 且被 paramBuffer.feed() 接受后才算合规采样帧。
@@ -660,6 +729,8 @@ class MainActivity : AppCompatActivity() {
         // 切换引擎时重置参数缓存区（旧引擎的锁定计数不再适用）
         paramBuffer.reset()
         imageBuffer.reset()
+        hideImageDisplay()
+        updateImageInfo()
         updateParamHeaderTitle()
         refreshParamViews()
 
@@ -720,14 +791,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 根据当前 Rx 开关同步更新当前引擎的图像过滤状态。
-     * ★ 图像数据包菜单仅控制显示输出，引擎始终处理图像数据，
-     *    确保 imageBuffer 正确更新。
-     *    图像菜单关闭时由 appendOutput 层阻止数据进入显示缓冲。
+     * 引擎始终不过滤图像数据（图像过滤仅在输出窗口显示层生效）。
+     * 切换引擎时同步调用以确保新引擎处于正确状态。
      */
     private fun updateImagePacketFilter() {
-        val filtered = !outputRxHighlight
-        currentDataEngine.setImagePacketFiltered(filtered)
+        currentDataEngine.setImagePacketFiltered(false)
     }
 
     private fun enableDoubleBackExit() {
@@ -1456,7 +1524,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupControlCheckboxes() {
         val cv = controlView ?: return
-        var imageChecked = false
+        var imageChecked = rxShowImageWindow
         var waveformChecked = false
 
         val imageCheckbox = cv.findViewById<View>(R.id.controlImageCheckbox)
@@ -1478,9 +1546,20 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
+        // 初始化 UI 状态
+        updateImageCheckbox()
+        updateWaveformCheckbox()
+
         imageRow.setOnClickListener {
             imageChecked = !imageChecked
+            rxShowImageWindow = imageChecked
             updateImageCheckbox()
+            if (imageChecked) {
+                // 开启时：若缓存区有上一帧数据，直接显示
+                restoreLastImage()
+            } else {
+                hideImageDisplay()
+            }
             AppLogger.i("MainActivity", "控件-图像: ${if (imageChecked) "开" else "关"}")
         }
 
@@ -1488,6 +1567,102 @@ class MainActivity : AppCompatActivity() {
             waveformChecked = !waveformChecked
             updateWaveformCheckbox()
             AppLogger.i("MainActivity", "控件-波形图: ${if (waveformChecked) "开" else "关"}")
+        }
+
+        // 初始刷新图像信息显示
+        updateImageInfo()
+
+        // ── 还原图像位置与尺寸按钮 ──
+        val resetRow = cv.findViewById<View>(R.id.controlImageResetRow)
+        if (resetRow != null) {
+            
+        // ── 保存图像按钮 ──
+        val saveRow = cv.findViewById<View>(R.id.controlImageSaveRow)
+        if (saveRow != null) {
+            saveRow.setOnClickListener { saveCurrentImage() }
+        }
+resetRow.setOnClickListener { resetImagePosition() }
+        }
+    }
+
+    /** 还原图像窗口位置和尺寸为默认值，清除冷保存数据。 */
+    private fun resetImagePosition() {
+        panelConfig.imageWindowPosX = -1
+        panelConfig.imageWindowPosY = -1
+        panelConfig.imageWindowWidth = -1
+        panelConfig.imageWindowHeight = -1
+        ConfigManager.saveConfig(panelConfig)
+        // 如果窗口已显示，移除并等待下次图像帧重建
+        if (imageWindowContainer != null) {
+            hideImageDisplay()
+            showToastShort("图像窗口位置已还原，等待新图像帧刷新")
+        } else {
+            showToastShort("图像窗口位置已还原")
+        }
+    }
+
+    /** 保存当前图像帧为 PNG 到 Download/ECHO+ 目录。 */
+    private fun saveCurrentImage() {
+        val bytes = imageBuffer.rawBytes
+        val w = imageBuffer.imageWidth
+        val h = imageBuffer.imageHeight
+        val fmt = imageBuffer.imageFormat
+        if (bytes == null || bytes.isEmpty() || w <= 0 || h <= 0) {
+            showToastShort("无可用图像数据")
+            return
+        }
+        Thread {
+            try {
+                // Grayscale8 → Bitmap (ARGB_8888)
+                val pixels = IntArray(w * h)
+                for (i in pixels.indices) {
+                    val gray = bytes[i].toInt() and 0xFF
+                    pixels[i] = (0xFF shl 24) or (gray shl 16) or (gray shl 8) or gray
+                }
+                val bmp = android.graphics.Bitmap.createBitmap(pixels, w, h, android.graphics.Bitmap.Config.ARGB_8888)
+
+                val sdf = java.text.SimpleDateFormat("yy-MM-dd_HH-mm-ss", java.util.Locale.getDefault())
+                val ts = sdf.format(java.util.Date())
+                val filename = "$ts.png"
+                val dir = File(android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_DOWNLOADS), "ECHO+")
+                if (!dir.exists()) dir.mkdirs()
+                val file = File(dir, filename)
+
+                file.outputStream().use { out ->
+                    bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                }
+                bmp.recycle()
+
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    showToastShort("已保存: Download/ECHO+/$filename (${w}x$h)")
+                }
+            } catch (e: Exception) {
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    showToastShort("保存失败: ${e.message}")
+                }
+            }
+        }.start()
+    }
+
+    /** 更新控件页图像信息面板（宽度、高度、格式）。可从任意线程安全调用。 */
+    private fun updateImageInfo() {
+        outputHandler.post {
+            if (controlView == null) return@post
+            val infoText = controlView!!.findViewById<TextView>(R.id.controlImageInfoText) ?: return@post
+            val infoPanel = controlView!!.findViewById<View>(R.id.controlImageInfoPanel) ?: return@post
+
+            val w = imageBuffer.imageWidth
+            val h = imageBuffer.imageHeight
+            val fmt = imageBuffer.imageFormat
+
+            if (w > 0 && h > 0) {
+                val fmtName = ImageFrame.getFormatName(fmt)
+                infoText.text = "宽度: ${w}px\n高度: ${h}px\n格式: $fmtName"
+                infoPanel.visibility = View.VISIBLE
+            } else {
+                infoPanel.visibility = View.GONE
+            }
         }
     }
 
@@ -1931,7 +2106,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupOutputView() {
-        val toolbarH = dpToPx(40)
+        val isWide = panelConfig.menuBarWidthDp >= 56
+        val toolbarH = dpToPx(if (isWide) TOOLBAR_HEIGHT_WIDE else TOOLBAR_HEIGHT_NARROW)
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
         root.layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
@@ -1944,7 +2120,7 @@ class MainActivity : AppCompatActivity() {
         fun makeSep(): android.widget.TextView {
             val sep = android.widget.TextView(this)
             sep.text = "|"
-            sep.textSize = 17f
+            sep.textSize = if (isWide) 17f else 14f
             sep.setTextColor(android.graphics.Color.parseColor("#424242"))
             sep.setPadding(dpToPx(4), 0, dpToPx(4), 0)
             return sep
@@ -1954,13 +2130,13 @@ class MainActivity : AppCompatActivity() {
             val highlightColor = android.graphics.Color.parseColor("#4FC3F7")
             val bgHighlight = android.graphics.Color.parseColor("#194FC3F7")
             val tv = android.widget.TextView(this)
-            tv.text = text; tv.textSize = 17f
+            tv.text = text; tv.textSize = if (isWide) 17f else 14f
             tv.typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD_ITALIC)
             tv.setPadding(dpToPx(3), 0, dpToPx(3), 0)
             tv.setTextColor(defaultColor)
             tv.gravity = android.view.Gravity.CENTER
-            tv.minimumHeight = dpToPx(40)
-            if (fixedWidth) { tv.minimumWidth = dpToPx(44) }
+            tv.minimumHeight = dpToPx(if (isWide) 40 else 28)
+            if (fixedWidth) { tv.minimumWidth = dpToPx(if (isWide) 44 else 30) }
             tv.isClickable = true
             tv.setOnTouchListener { v, e ->
                 when (e.action) {
@@ -1983,9 +2159,10 @@ class MainActivity : AppCompatActivity() {
             }
         }
         toolbar.addView(btnAbcHex); toolbar.addView(makeSep())
-        val clockWrap = FrameLayout(this).apply { layoutParams = LinearLayout.LayoutParams(dpToPx(40), dpToPx(40)) }
+        val clockSz = dpToPx(if (isWide) 40 else 28)
+        val clockWrap = FrameLayout(this).apply { layoutParams = LinearLayout.LayoutParams(clockSz, clockSz) }
         btnTimestamp = clockWrap
-        val clockView = ClockIconView(this).apply { layoutParams = FrameLayout.LayoutParams(dpToPx(40), dpToPx(40)); isActive = outputShowTimestamp }
+        val clockView = ClockIconView(this).apply { layoutParams = FrameLayout.LayoutParams(clockSz, clockSz); isActive = outputShowTimestamp }
         clockWrap.setOnClickListener { outputShowTimestamp = !outputShowTimestamp; clockView.isActive = outputShowTimestamp }
         clockWrap.setOnTouchListener { v, e ->
             when (e.action) {
@@ -1997,7 +2174,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         clockWrap.addView(clockView); toolbar.addView(clockWrap)
-        btnRx = makeBtn("Rx", true).apply { (this as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputRxHighlight) "#4FC3F7" else "#9E9E9E")); setOnClickListener { outputRxHighlight = !outputRxHighlight; (btnRx as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputRxHighlight) "#4FC3F7" else "#9E9E9E")); updateImagePacketFilter(); btnRxDropdown.invalidate(); btnRx.invalidate() } }
+        btnRx = makeBtn("Rx", true).apply { (this as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputRxHighlight) "#4FC3F7" else "#9E9E9E")); setOnClickListener { outputRxHighlight = !outputRxHighlight; (btnRx as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputRxHighlight) "#4FC3F7" else "#9E9E9E")); btnRxDropdown.invalidate(); btnRx.invalidate() } }
         toolbar.addView(btnRx)
 
         // ── Rx 下拉箭头（单个向下箭头 ∨）──
@@ -2028,7 +2205,7 @@ class MainActivity : AppCompatActivity() {
                 canvas.drawLine(cx, cy + size * 0.4f, cx + size * 0.5f, cy - size * 0.2f, p)
             }
         }.apply {
-            layoutParams = LinearLayout.LayoutParams(dpToPx(20), dpToPx(40))
+            layoutParams = LinearLayout.LayoutParams(dpToPx(if (isWide) 20 else 16), dpToPx(if (isWide) 40 else 28))
             isClickable = true
             setOnClickListener { showRxFilterPopup() }
             setOnTouchListener { v, e ->
@@ -2123,7 +2300,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(scrollViewWrapper)
 
         // 发送条
-        val sendBarH = dpToPx(40)
+        val sendBarH = dpToPx(if (isWide) SENDBAR_HEIGHT_WIDE else SENDBAR_HEIGHT_NARROW)
         val sendBar = LinearLayout(this)
         sendBar.orientation = LinearLayout.HORIZONTAL
         sendBar.setBackgroundColor(android.graphics.Color.parseColor("#2A2A2A"))
@@ -2136,8 +2313,8 @@ class MainActivity : AppCompatActivity() {
         sendBar.addView(makeSep())
 
         sendEditText = android.widget.EditText(this)
-        sendEditText.layoutParams = LinearLayout.LayoutParams(0, dpToPx(34), 1f)
-        sendEditText.textSize = 14f
+        sendEditText.layoutParams = LinearLayout.LayoutParams(0, dpToPx(if (isWide) 34 else 24), 1f)
+        sendEditText.textSize = if (isWide) 14f else 12f
         sendEditText.typeface = ResourcesCompat.getFont(this, R.font.maple_mono)
         sendEditText.setTextColor(android.graphics.Color.parseColor("#E0E0E0"))
         sendEditText.setHintTextColor(android.graphics.Color.parseColor("#616161"))
@@ -2230,7 +2407,7 @@ class MainActivity : AppCompatActivity() {
         }
         lineEndingSpinner.setBackgroundColor(android.graphics.Color.parseColor("#1A1A1A"))
         lineEndingSpinner.setPadding(dpToPx(6), 0, dpToPx(6), 0)
-        val spinnerLp = LinearLayout.LayoutParams(dpToPx(80), dpToPx(34))
+        val spinnerLp = LinearLayout.LayoutParams(dpToPx(if (isWide) 80 else 52), dpToPx(if (isWide) 34 else 24))
         spinnerLp.gravity = android.view.Gravity.CENTER_VERTICAL
         lineEndingSpinner.layoutParams = spinnerLp
         sendBar.addView(lineEndingSpinner)
@@ -2355,23 +2532,10 @@ class MainActivity : AppCompatActivity() {
         if (data.isEmpty()) return
         // ★ 断开连接后不再处理数据（安全冗余，transceiver 端已清除 listener）
         if (!isConnected) return
+        // ★ IMAGE_PACKET 在 setupDataEngineForTransceiver 的 lambda 中已提前处理，
+        //    此处不应再收到 IMAGE_PACKET 类型。安全兜底：静默丢弃。
+        if (outputType == OutputType.IMAGE_PACKET) return
         val ts = if (outputShowTimestamp) System.currentTimeMillis() else null
-
-        // ── 图像数据 ──
-        if (outputType == OutputType.IMAGE_PACKET) {
-            // ★ 保存当前 ImageBuffer 状态以判断是前导帧还是数据载荷
-            val isDataPayload = imageBuffer.isCollecting
-            // 馈送至图像缓存区（帧头 + 数据成对存储）
-            imageBuffer.feed(data)
-
-            // ★ 原始数据载荷仅进入 ImageBuffer，不写入显示缓冲
-            if (isDataPayload) return
-
-            // ★ 图像数据包关闭 或 全局 Rx 关闭 → 不写入显示缓冲
-            if (!rxShowImagePacket || !outputRxHighlight) {
-                return
-            }
-        }
 
         // ── 输出显示缓冲（统一单缓冲区）──
         synchronized(outputDataEntries) {
@@ -2397,6 +2561,337 @@ class MainActivity : AppCompatActivity() {
         if (!outputFlushPending) {
             outputFlushPending = true
             outputHandler.postDelayed(outputFlushRunnable, OUTPUT_FLUSH_INTERVAL_MS)
+        }
+    }
+
+    /**
+     * 可拖动/可缩放的图像子窗口。
+     * 设计：
+     *   - 外层 FrameLayout 作为容器，带颜色背景（即边框）
+     *   - 内部 GLImageView 设 margin = BORDER_DP，居于边框内部
+     *   - 触摸边框四角 → 等比例缩放
+     *   - 触摸边框非角区域 → 移动窗口
+     *   - 触摸内部图像区域 → 无操作
+     *   - 受 rxShowImageWindow（控制页"图像"复选框）控制
+     */
+    private fun checkAndDisplayImage() {
+        val frame = imageBuffer.consumeNewFrame() ?: return
+        if (!frame.isGrayscale8) {
+            AppLogger.i("MainActivity", "非 Grayscale8 图像帧（format=${frame.format}），跳过渲染")
+            return
+        }
+        if (!frame.isValid) {
+            AppLogger.w("MainActivity", "无效图像帧: ${frame.dataSize}B, ${frame.width}x${frame.height}")
+            return
+        }
+        // ★ 图像窗口关闭时不渲染
+        if (!rxShowImageWindow) return
+        outputHandler.post {
+            try {
+                val density = resources.displayMetrics.density
+                val TOUCH_EDGE_DP = 8 // 触摸检测宽度 dp（图像边缘向内 4dp + 容器 Padding 向外 4dp）
+                val touchEdgePx = 0 // GLImageView 无内缩，触摸由容器 padding + 内部检测实现
+                val imageAspect = frame.width.toFloat() / frame.height.toFloat()
+
+                // 尺寸上限 = 绘图容器宽度（屏幕宽度）
+                val maxWinPx = plotContainer.width.coerceAtLeast(100)
+                // 还原时初始尺寸 = 480dp，上限为屏幕宽度
+                val initDefaultPx = (480 * density).toInt().coerceAtMost(maxWinPx)
+                var winW: Int; var winH: Int
+                if (frame.width > frame.height) {
+                    winW = initDefaultPx
+                    winH = (winW / imageAspect).toInt()
+                } else {
+                    winH = initDefaultPx
+                    winW = (winH * imageAspect).toInt()
+                }
+
+                // ── 首次创建 ──
+                if (imageWindowContainer == null) {
+                    // 读取保存的配置（冷保存）
+                    val savedW = panelConfig.imageWindowWidth
+                    val savedH = panelConfig.imageWindowHeight
+                    val savedX = panelConfig.imageWindowPosX
+                    val savedY = panelConfig.imageWindowPosY
+                    val restoreSaved = savedW > 0 && savedH > 0
+
+                    val container = FrameLayout(this@MainActivity)
+                    // 容器尺寸 = 图像尺寸 + 8dp (4dp padding 每侧向外延伸)
+                    val containerPadding = (4 * density).toInt()
+                    container.layoutParams = FrameLayout.LayoutParams(
+                        if (restoreSaved) savedW else winW + containerPadding * 2,
+                        if (restoreSaved) savedH else winH + containerPadding * 2
+                    ).apply {
+                        gravity = Gravity.TOP or Gravity.START
+                        leftMargin = if (restoreSaved) savedX else dpToPx(16)
+                        topMargin = if (restoreSaved) savedY else dpToPx(16)
+                    }
+                    // 无边框背景，完全透明
+                    container.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    container.setPadding(containerPadding, containerPadding, containerPadding, containerPadding)
+                    container.isClickable = true
+                    container.isFocusable = true
+
+                    // GLImageView（无内缩 margin，填满容器 padding 后的区域 = 图像尺寸）
+                    val glv = GLImageView(this@MainActivity)
+                    glv.layoutParams = FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT
+                    )
+                    glv.isClickable = false
+                    glv.isFocusable = false
+                    container.addView(glv)
+                    glImageView = glv
+
+                    // ── 触摸交互：缩放 / 移动 ──
+                    // 触摸区域枚举
+                    var touchMode = 0 // 0=无, 1=移动, 2=缩放
+                    var touchCorner = 0 // 缩放角: 0=TL,1=TR,2=BL,3=BR
+                    var startRawX = 0f; var startRawY = 0f
+                    var startL = 0; var startT = 0; var startW = 0; var startH = 0
+
+                    container.setOnTouchListener { v, event ->
+                        val lp = v.layoutParams as ViewGroup.MarginLayoutParams
+                        val vw = v.width; val vh = v.height
+                        val edgePx = (TOUCH_EDGE_DP * density).toInt()
+                        val cornerPx = (TOUCH_EDGE_DP * 1.6f * density).toInt() // 角区域略大
+
+                        when (event.action) {
+                            MotionEvent.ACTION_DOWN -> {
+                                val ex = event.x; val ey = event.y
+                                // 判断是否在四角区域
+                                val atTL = ex < cornerPx && ey < cornerPx
+                                val atTR = ex > vw - cornerPx && ey < cornerPx
+                                val atBL = ex < cornerPx && ey > vh - cornerPx
+                                val atBR = ex > vw - cornerPx && ey > vh - cornerPx
+
+                                if (atTL || atTR || atBL || atBR) {
+                                    touchMode = 2
+                                    touchCorner = if (atTL) 0 else if (atTR) 1 else if (atBL) 2 else 3
+                                } else if (ex < edgePx || ex > vw - edgePx || ey < edgePx || ey > vh - edgePx) {
+                                    touchMode = 1 // 在边框非角区域 → 移动
+                                } else {
+                                    touchMode = 0 // 图像内部 → 不处理
+                                    return@setOnTouchListener false
+                                }
+                                startRawX = event.rawX; startRawY = event.rawY
+                                startL = lp.leftMargin; startT = lp.topMargin
+                                startW = vw; startH = vh
+                                v.bringToFront(); v.invalidate()
+                                true
+                            }
+                            MotionEvent.ACTION_MOVE -> {
+                                if (touchMode == 0) return@setOnTouchListener false
+                                val deltaX = (event.rawX - startRawX).toInt()
+                                val deltaY = (event.rawY - startRawY).toInt()
+
+                                if (touchMode == 1) {
+                                    // ── 移动 ──
+                                    val parentW = plotContainer.width
+                                    val parentH = plotContainer.height
+                                    lp.leftMargin = (startL + deltaX).coerceIn(-vw / 2, parentW - vw / 4)
+                                    lp.topMargin = (startT + deltaY).coerceIn(-vh / 4, parentH - vh / 4)
+                                    v.layoutParams = lp
+                                } else {
+                                    // ── 缩放（保持宽高比）──
+                                    var newW = startW; var newH = startH
+                                    when (touchCorner) {
+                                        0 -> { // 左上角
+                                            newW = (startW - deltaX).coerceAtLeast(50)
+                                            newH = (newW / imageAspect).toInt().coerceAtLeast(50)
+                                            newW = (newH * imageAspect).toInt()
+                                            lp.leftMargin = startL + startW - newW
+                                            lp.topMargin = startT + startH - newH
+                                        }
+                                        1 -> { // 右上角
+                                            newW = (startW + deltaX).coerceAtLeast(50)
+                                            newH = (newW / imageAspect).toInt().coerceAtLeast(50)
+                                            newW = (newH * imageAspect).toInt()
+                                            lp.leftMargin = startL
+                                            lp.topMargin = startT + startH - newH
+                                        }
+                                        2 -> { // 左下角
+                                            newW = (startW - deltaX).coerceAtLeast(50)
+                                            newH = (newW / imageAspect).toInt().coerceAtLeast(50)
+                                            newW = (newH * imageAspect).toInt()
+                                            lp.leftMargin = startL + startW - newW
+                                            lp.topMargin = startT
+                                        }
+                                        3 -> { // 右下角
+                                            newW = (startW + deltaX).coerceAtLeast(50)
+                                            newH = (newW / imageAspect).toInt().coerceAtLeast(50)
+                                            newW = (newH * imageAspect).toInt()
+                                            lp.leftMargin = startL
+                                            lp.topMargin = startT
+                                        }
+                                    }
+                                    lp.width = newW; lp.height = newH
+                                    v.layoutParams = lp
+                                }
+                                true
+                            }
+                            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                                touchMode = 0
+                                // ★ 保存当前位置和尺寸到配置
+                                val mlp = v.layoutParams as ViewGroup.MarginLayoutParams
+                                panelConfig.imageWindowPosX = mlp.leftMargin
+                                panelConfig.imageWindowPosY = mlp.topMargin
+                                panelConfig.imageWindowWidth = mlp.width
+                                panelConfig.imageWindowHeight = mlp.height
+                                ConfigManager.saveConfig(panelConfig)
+                                true
+                            }
+                            else -> false
+                        }
+                    }
+                    imageWindowContainer = container
+                    plotContainer.addView(container)
+                }
+
+                // ── 每次更新：更新 GL 纹理 ──
+                imageWindowContainer!!.bringToFront()
+                plotTitle.visibility = View.GONE
+                glImageView?.setImageFrame(frame)
+                // 更新控件页图像信息
+                updateImageInfo()
+            } catch (e: Exception) {
+                AppLogger.e("MainActivity", "图像渲染异常", e)
+            }
+        }
+    }
+
+    /** 从 ImageBuffer 缓存中恢复显示上一帧图像（适用于开关切换后重新显示）。 */
+    private fun restoreLastImage() {
+        val bytes = imageBuffer.rawBytes
+        val w = imageBuffer.imageWidth
+        val h = imageBuffer.imageHeight
+        val fmt = imageBuffer.imageFormat
+        if (bytes == null || bytes.isEmpty() || w <= 0 || h <= 0) return
+
+        val frame = ImageFrame(bytes, w, h, fmt)
+        if (!frame.isValid || !frame.isGrayscale8) return
+
+        outputHandler.post {
+            try {
+                val density = resources.displayMetrics.density
+                val maxWinPx = plotContainer.width.coerceAtLeast(100)
+                val initDefaultPx = (480 * density).toInt().coerceAtMost(maxWinPx)
+                val imageAspect = w.toFloat() / h.toFloat()
+                var winW = initDefaultPx
+                var winH = (winW / imageAspect).toInt()
+                if (winH > maxWinPx) { winH = maxWinPx; winW = (winH * imageAspect).toInt() }
+
+                if (imageWindowContainer == null) {
+                    val savedW = panelConfig.imageWindowWidth
+                    val savedH = panelConfig.imageWindowHeight
+                    val savedX = panelConfig.imageWindowPosX
+                    val savedY = panelConfig.imageWindowPosY
+                    val restoreSaved = savedW > 0 && savedH > 0
+
+                    val containerPadding = (4 * density).toInt()
+                    val container = FrameLayout(this@MainActivity)
+                    container.layoutParams = FrameLayout.LayoutParams(
+                        if (restoreSaved) savedW else winW + containerPadding * 2,
+                        if (restoreSaved) savedH else winH + containerPadding * 2
+                    ).apply {
+                        gravity = Gravity.TOP or Gravity.START
+                        leftMargin = if (restoreSaved) savedX else dpToPx(16)
+                        topMargin = if (restoreSaved) savedY else dpToPx(16)
+                    }
+                    container.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    container.setPadding(containerPadding, containerPadding, containerPadding, containerPadding)
+                    container.isClickable = true
+                    container.isFocusable = true
+
+                    val glv = GLImageView(this@MainActivity)
+                    glv.layoutParams = FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT
+                    )
+                    glv.isClickable = false
+                    glv.isFocusable = false
+                    container.addView(glv)
+                    glImageView = glv
+
+                    // ── 触摸交互 ──
+                    var touchMode = 0; var touchCorner = 0
+                    var startRawX = 0f; var startRawY = 0f
+                    var startL = 0; var startT = 0; var startW = 0; var startH = 0
+                    container.setOnTouchListener { v, event ->
+                        val mlp = v.layoutParams as ViewGroup.MarginLayoutParams
+                        val vv = v.width; val vh = v.height
+                        val edgePx = (8 * density).toInt()
+                        val cornerPx = (8 * 1.6f * density).toInt()
+                        when (event.action) {
+                            MotionEvent.ACTION_DOWN -> {
+                                val ex = event.x; val ey = event.y
+                                val atTL = ex < cornerPx && ey < cornerPx
+                                val atTR = ex > vv - cornerPx && ey < cornerPx
+                                val atBL = ex < cornerPx && ey > vh - cornerPx
+                                val atBR = ex > vv - cornerPx && ey > vh - cornerPx
+                                if (atTL || atTR || atBL || atBR) {
+                                    touchMode = 2; touchCorner = if (atTL) 0 else if (atTR) 1 else if (atBL) 2 else 3
+                                } else if (ex < edgePx || ex > vv - edgePx || ey < edgePx || ey > vh - edgePx) {
+                                    touchMode = 1
+                                } else { return@setOnTouchListener false }
+                                startRawX = event.rawX; startRawY = event.rawY
+                                startL = mlp.leftMargin; startT = mlp.topMargin
+                                startW = vv; startH = vh; v.bringToFront(); v.invalidate(); true
+                            }
+                            MotionEvent.ACTION_MOVE -> {
+                                if (touchMode == 0) return@setOnTouchListener false
+                                val dx = (event.rawX - startRawX).toInt(); val dy = (event.rawY - startRawY).toInt()
+                                if (touchMode == 1) {
+                                    val pw = plotContainer.width; val ph = plotContainer.height
+                                    mlp.leftMargin = (startL + dx).coerceIn(-vv / 2, pw - vv / 4)
+                                    mlp.topMargin = (startT + dy).coerceIn(-vh / 4, ph - vh / 4)
+                                    v.layoutParams = mlp
+                                } else {
+                                    var nw = startW; var nh = startH
+                                    when (touchCorner) {
+                                        0 -> { nw = (startW - dx).coerceAtLeast(50); nh = (nw / imageAspect).toInt().coerceAtLeast(50); nw = (nh * imageAspect).toInt(); mlp.leftMargin = startL + startW - nw; mlp.topMargin = startT + startH - nh }
+                                        1 -> { nw = (startW + dx).coerceAtLeast(50); nh = (nw / imageAspect).toInt().coerceAtLeast(50); nw = (nh * imageAspect).toInt(); mlp.leftMargin = startL; mlp.topMargin = startT + startH - nh }
+                                        2 -> { nw = (startW - dx).coerceAtLeast(50); nh = (nw / imageAspect).toInt().coerceAtLeast(50); nw = (nh * imageAspect).toInt(); mlp.leftMargin = startL + startW - nw; mlp.topMargin = startT }
+                                        3 -> { nw = (startW + dx).coerceAtLeast(50); nh = (nw / imageAspect).toInt().coerceAtLeast(50); nw = (nh * imageAspect).toInt(); mlp.leftMargin = startL; mlp.topMargin = startT }
+                                    }
+                                    mlp.width = nw; mlp.height = nh; v.layoutParams = mlp
+                                }
+                                true
+                            }
+                            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                                touchMode = 0
+                                val mlp2 = v.layoutParams as ViewGroup.MarginLayoutParams
+                                panelConfig.imageWindowPosX = mlp2.leftMargin
+                                panelConfig.imageWindowPosY = mlp2.topMargin
+                                panelConfig.imageWindowWidth = mlp2.width
+                                panelConfig.imageWindowHeight = mlp2.height
+                                ConfigManager.saveConfig(panelConfig); true
+                            }
+                            else -> false
+                        }
+                    }
+                    imageWindowContainer = container
+                    plotContainer.addView(container)
+                }
+                imageWindowContainer!!.bringToFront()
+                plotTitle.visibility = View.GONE
+                glImageView?.setImageFrame(frame)
+                updateImageInfo()
+            } catch (e: Exception) {
+                AppLogger.e("MainActivity", "恢复图像显示异常", e)
+            }
+        }
+    }
+
+    /** 隐藏图像显示，移除子窗口，恢复绘图区标题 */
+    private fun hideImageDisplay() {
+        imageWindowContainer?.let { container ->
+            plotContainer.removeView(container)
+        }
+        imageWindowContainer = null
+        glImageView = null
+        if (::plotTitle.isInitialized) {
+            plotTitle.visibility = View.VISIBLE
         }
     }
 
@@ -2626,7 +3121,6 @@ class MainActivity : AppCompatActivity() {
         })
         container.addView(makeMenuItem("图像数据包", rxShowImagePacket) {
             rxShowImagePacket = !rxShowImagePacket
-            updateImagePacketFilter()
             btnRxDropdown.invalidate()
         })
 
@@ -2816,6 +3310,8 @@ class MainActivity : AppCompatActivity() {
         // 断开连接 -> 重置参数缓存区（下次连接重新锁定）
         paramBuffer.reset()
         imageBuffer.reset()
+        hideImageDisplay()
+        updateImageInfo()
         updateParamHeaderTitle()
         refreshParamViews()
         onConnectionStateChanged(false)

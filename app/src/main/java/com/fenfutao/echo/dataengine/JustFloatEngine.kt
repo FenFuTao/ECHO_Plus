@@ -175,9 +175,10 @@ class JustFloatEngine : DataEngine {
         }
     }
 
-    /** 完成图像接收，输出 IMAGE_PACKET，重置状态 */
+    /** 完成图像接收，输出 IMAGE_PACKET，重置状态。
+     * ★ buildImagePacketOutput() 内部会 reset imageDataBuffer；
+     *    此处再次 reset 是为了覆盖静默丢弃路径（不调用 buildImagePacketOutput 时）。 */
     private fun finishImageForJustFloat(results: MutableList<DataEngineOutput>) {
-        // ★ 静默丢弃模式：不产生任何输出，仅重置状态
         if (!imagePacketFiltered && !imageSkipSilently) {
             results.addAll(buildImagePacketOutput(connectionId = ""))
         }
@@ -420,9 +421,12 @@ class JustFloatEngine : DataEngine {
         // 第 1 条：前导帧信息（去掉 0x7F800000 帧尾标记）
         results.add(DataEngineOutput(
             text = "ID=$imageId, SIZE=${imageSize}B, ${imageWidth}x$imageHeight, $formatName".encodeHex(),
-            type = OutputType.IMAGE_PACKET
+            type = OutputType.IMAGE_PACKET,
+            imageWidth = imageWidth,
+            imageHeight = imageHeight,
+            imageFormat = imageFormat
         ))
-        // 第 2 条：图像原始 hex 数据（标记为 isImageDataPayload 以避免进入显示区）
+        // 第 2 条：图像原始数据（完整原始字节通过 rawImageBytes 传递，hex 仅保留摘要）
         val raw = imageDataBuffer.toByteArray()
         imageDataBuffer.reset()
         val truncated = if (raw.size <= 16) {
@@ -433,7 +437,11 @@ class JustFloatEngine : DataEngine {
         results.add(DataEngineOutput(
             text = truncated,
             type = OutputType.IMAGE_PACKET,
-            isImageDataPayload = true
+            isImageDataPayload = true,
+            rawImageBytes = raw,
+            imageWidth = imageWidth,
+            imageHeight = imageHeight,
+            imageFormat = imageFormat
         ))
         return results
     }

@@ -24,6 +24,8 @@
     <string name="cmd_btn4">命令四</string>
     <string name="control_image">图像</string>
     <string name="control_waveform">波形图</string>
+    <string name="control_image_reset">还原图像位置与尺寸</string>
+    <string name="control_image_save">保存图像</string>
     <string name="conn_connect">连接设备</string>
     <string name="conn_disconnect">断开设备</string>
     <string name="param_header_title">数据</string>
@@ -33,55 +35,64 @@
     <string name="bar_large">宽 (适合平板)</string>
     <string name="menu_btn1">测试按钮一</string>
     <string name="menu_btn2">测试按钮二</string>
-    <string name="menu_btn3">测试按钮三</string>
-    <string name="menu_btn4">测试按钮四</string>
-    <string name="protocol_title">协议与连接</string>
-    <string name="protocol_status_disconnected">未连接</string>
-    <string name="protocol_status_connected">已连接</string>
-    <string name="protocol_data_engine">数据引擎</string>
-    <string name="protocol_data_engine_desc">数据解析与通信协议引擎</string>
-    <string name="protocol_data_interface">数据接口</string>
-    <string name="protocol_data_interface_desc">与下位机通讯的物理接口</string>
-    <string name="protocol_select_hint">请选择通讯接口</string>
-    <string name="protocol_doc_hint">点击问号，前往详细文档</string>
-    <string name="protocol_option_serial">串口</string>
-    <string name="protocol_option_udp">UDP</string>
-    <string name="protocol_option_tcp_client">TCP客户端</string>
-    <string name="protocol_option_tcp_server">TCP服务端</string>
-    <string name="protocol_option_demo">Demo</string>
-    <string name="udp_config_title">UDP参数配置</string>
-    <string name="udp_remote_ip">远程IP</string>
-    <string name="udp_remote_port">远程端口</string>
-    <string name="udp_local_port">本地端口</string>
-    <string name="tcp_client_config_title">TCP客户端参数配置</string>
-    <string name="tcp_client_server_ip">服务器IP</string>
-    <string name="tcp_client_network_port">网络端口</string>
-    <string name="tcp_client_handshake">握手数据</string>
-    <string name="tcp_server_config_title">TCP服务端参数配置</string>
-    <string name="tcp_server_listen_port">监听端口</string>
-    <string name="tcp_server_conn_count">连接数量</string>
-    <string name="tcp_server_current_conn">当前连接</string>
-    <string name="protocol_option_firewater">FireWater</string>
-    <string name="protocol_option_justfloat">JustFloat</string>
-    <string name="protocol_option_rawdata">RawData</string>
-    <string name="settings_ui_size">界面尺寸</string>
-    <string name="settings_option_narrow">窄（适合手机）</string>
-    <string name="settings_option_wide">宽（适合平板）</string>
-    <string name="settings_tcp_timeout">TCP超时时间</string>
-    <string name="settings_tcp_timeout_unit">秒</string>
-    <string name="tcp_server_conn_empty">无设备连接</string>
-    <string name="serial_config_title">串口参数配置</string>
-    <string name="serial_port">端口号</string>
-    <string name="serial_baud_rate">波特率</string>
-    <string name="serial_flow_control">数据流控</string>
-    <string name="serial_parity">校验位</string>
-    <string name="serial_data_bits">数据位数</string>
-    <string name="serial_stop_bits">停止位数</string>
-    <string name="serial_flow_signal">流控信号</string>
     <string name="settings_export">导出输出数据</string>
     <string name="settings_reset">恢复默认配置</string>
     <string name="settings_reset_confirm">确认</string>
     <string name="settings_reset_cancel">取消</string>
     <string name="local_ip_title">本机IP地址</string>
     <string name="local_ip_refresh">刷新</string>
+
+    <!-- 协议设置页 -->
+    <string name="protocol_title">协议与连接</string>
+    <string name="protocol_data_engine">数据引擎</string>
+    <string name="protocol_doc_hint">通信协议文档</string>
+    <string name="protocol_data_interface">数据接口</string>
+    <string name="protocol_data_interface_desc">选择设备通信的数据接口协议</string>
+
+    <!-- 串口配置 -->
+    <string name="serial_config_title">串口配置</string>
+    <string name="serial_port">串口</string>
+    <string name="serial_baud_rate">波特率</string>
+    <string name="serial_flow_control">流控制</string>
+    <string name="serial_parity">校验位</string>
+    <string name="serial_data_bits">数据位</string>
+    <string name="serial_stop_bits">停止位</string>
+    <string name="serial_flow_signal">流信号</string>
+
+    <!-- UDP 配置 -->
+    <string name="udp_config_title">UDP 配置</string>
+    <string name="udp_remote_ip">远程 IP</string>
+    <string name="udp_remote_port">远程端口</string>
+    <string name="udp_local_port">本地端口</string>
+
+    <!-- TCP 客户端配置 -->
+    <string name="tcp_client_config_title">TCP 客户端配置</string>
+    <string name="tcp_client_server_ip">服务器 IP</string>
+    <string name="tcp_client_network_port">网络端口</string>
+    <string name="tcp_client_handshake">握手协议</string>
+
+    <!-- TCP 服务端配置 -->
+    <string name="tcp_server_config_title">TCP 服务端配置</string>
+    <string name="tcp_server_listen_port">监听端口</string>
+    <string name="tcp_server_handshake">握手协议</string>
+    <string name="tcp_server_conn_count">连接数</string>
+    <string name="tcp_server_current_conn">当前连接</string>
+    <string name="tcp_server_conn_empty">暂无设备连接</string>
+
+    <!-- 引擎/协议下拉选项 -->
+    <string name="protocol_option_firewater">FireWater</string>
+    <string name="protocol_option_justfloat">JustFloat</string>
+    <string name="protocol_option_rawdata">原始数据</string>
+    <string name="protocol_option_serial">串口</string>
+    <string name="protocol_option_udp">UDP</string>
+    <string name="protocol_option_tcp_client">TCP 客户端</string>
+    <string name="protocol_option_tcp_server">TCP 服务端</string>
+    <string name="protocol_option_demo">演示模式</string>
+
+    <!-- 设置页 -->
+    <string name="settings_ui_size">界面尺寸</string>
+    <string name="settings_tcp_timeout">TCP 超时时间</string>
+    <string name="settings_tcp_timeout_unit">秒</string>
+    <string name="settings_option_narrow">窄 (适合手机)</string>
+    <string name="settings_option_wide">宽 (适合平板)</string>
 </resources>

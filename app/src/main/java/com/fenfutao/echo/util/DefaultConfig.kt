@@ -51,6 +51,13 @@ object DefaultConfig {
         // ── Rx 过滤 ──
         rxShowSampleData = true,
         rxShowImagePacket = true,
+        rxShowImageWindow = true,
+
+        // ── 图像子窗口冷保存（-1 表示使用默认位置/尺寸）──
+        imageWindowPosX = -1,
+        imageWindowPosY = -1,
+        imageWindowWidth = -1,
+        imageWindowHeight = -1,
 
         // ── 发送区工具栏 ──
         sendHexMode = false,            // Abc
