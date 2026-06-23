@@ -179,6 +179,7 @@ class MainActivity : AppCompatActivity() {
     private var isDraggingV = false
     private var protocolView: View? = null
     private var settingsView: View? = null
+    private var controlView: View? = null
     private lateinit var vDividerView: View
     private lateinit var hDividerView: View
 
@@ -199,6 +200,7 @@ class MainActivity : AppCompatActivity() {
         private const val BAR_WIDE = 56
         private const val PROTOCOL_MENU_MARKER = -1
         private const val SETTINGS_MENU_MARKER = -2
+        private const val CONTROL_MENU_MARKER = -3
         // ── 分割面板最小尺寸 (dp) ──
         private const val MIN_PLOT_HEIGHT_DP = 80
         private const val MIN_OUTPUT_HEIGHT_DP = 80
@@ -430,6 +432,8 @@ class MainActivity : AppCompatActivity() {
         val inWidth = (60 * density).toInt()
         val paddingH = (8 * density).toInt()
         val paddingV = (6 * density).toInt()
+        val checkboxSize = (18 * density).toInt()
+        val checkboxMarginEnd = (10 * density).toInt()
 
         for (i in 0 until minOf(names.size, values.size)) {
             val color = android.graphics.Color.parseColor(PARAM_COLORS[i % PARAM_COLORS.size])
@@ -441,6 +445,29 @@ class MainActivity : AppCompatActivity() {
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 )
                 setPadding(0, paddingV, 0, paddingV)
+            }
+
+            // 可点击复选框：点击切换勾选/未勾选状态，不做其他响应
+            var checked = false
+            val checkbox = View(this).apply {
+                layoutParams = LinearLayout.LayoutParams(checkboxSize, checkboxSize).apply {
+                    marginEnd = checkboxMarginEnd
+                    gravity = android.view.Gravity.CENTER_VERTICAL
+                }
+                background = resources.getDrawable(R.drawable.bg_checkbox_unchecked, theme)
+                isClickable = false
+                isFocusable = false
+            }
+            row.addView(checkbox)
+
+            // 点击整行切换复选框状态（与控件页逻辑一致）
+            row.setOnClickListener {
+                checked = !checked
+                checkbox.background = resources.getDrawable(
+                    if (checked) R.drawable.bg_checkbox_checked
+                    else R.drawable.bg_checkbox_unchecked,
+                    theme
+                )
             }
 
             // In{序号}
@@ -870,7 +897,7 @@ class MainActivity : AppCompatActivity() {
         titleRes: Int, menuRes: Int, btnId: Int,
         listener: NavigationView.OnNavigationItemSelectedListener
     ) {
-        if (isMenuOpen && (currentMenuRes == PROTOCOL_MENU_MARKER || currentMenuRes == SETTINGS_MENU_MARKER)) {
+        if (isMenuOpen && (currentMenuRes == PROTOCOL_MENU_MARKER || currentMenuRes == SETTINGS_MENU_MARKER || currentMenuRes == CONTROL_MENU_MARKER)) {
             removeCustomViewsFromNav(getActiveNav())
         }
         if (isMenuOpen && currentMenuRes == menuRes) {
@@ -902,7 +929,7 @@ class MainActivity : AppCompatActivity() {
     private fun removeCustomViewsFromNav(nav: NavigationView) {
         for (i in nav.childCount - 1 downTo 0) {
             val child = nav.getChildAt(i)
-            if (child.tag == "protocol_view" || child.tag == "settings_view") {
+            if (child.tag == "protocol_view" || child.tag == "settings_view" || child.tag == "control_view") {
                 nav.removeView(child)
             }
         }
@@ -912,7 +939,7 @@ class MainActivity : AppCompatActivity() {
         setupSettingsButton()
         setupProtocolButton()
         setupMenuButton(R.id.menuBarCommand, R.string.nav_header_command, R.menu.menu_command, commandListener)
-        setupMenuButton(R.id.menuBarControl, R.string.nav_header_control, R.menu.menu_control, controlListener)
+        setupControlButton()
         setupConnectButton()
     }
 
@@ -1340,6 +1367,127 @@ class MainActivity : AppCompatActivity() {
                 }
                 else -> true
             }
+        }
+    }
+
+    // ====================== 控件页面 ======================
+
+    private fun setupControlButton() {
+        findViewById<ImageButton>(R.id.menuBarControl).setOnTouchListener { v, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    v.animate().scaleX(1.3f).scaleY(1.3f).setDuration(100).start()
+                    toggleControlPage()
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(100).start()
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(100).start()
+                    true
+                }
+                else -> true
+            }
+        }
+    }
+
+    private fun toggleControlPage() {
+        if (isMenuOpen && currentMenuRes == CONTROL_MENU_MARKER) {
+            closeMenu()
+            removeCustomViewsFromNav(getActiveNav())
+        } else {
+            showControlPage()
+        }
+    }
+
+    private fun showControlPage() {
+        if (controlView == null) {
+            controlView = layoutInflater.inflate(R.layout.page_control, null)
+            setupControlCheckboxes()
+        }
+
+        highlightMenuBarButton(R.id.menuBarControl)
+        val title = getString(R.string.nav_header_control)
+        val menuPx = getMenuPx()
+
+        if (!isMenuOpen) {
+            val active = getActiveNav()
+            setNavControlContent(active, title)
+            openMenu()
+        } else {
+            val oldNav = getActiveNav()
+            val newNav = getInactiveNav()
+            setNavControlContent(newNav, title)
+            newNav.translationX = -menuPx
+            newNav.visibility = View.VISIBLE
+            oldNav.animate().cancel()
+            newNav.animate().cancel()
+            oldNav.animate().translationX(-menuPx).setDuration(200).setInterpolator(DecelerateInterpolator())
+                .withEndAction { oldNav.visibility = View.GONE }.start()
+            newNav.animate().translationX(0f).setDuration(280).setInterpolator(DecelerateInterpolator()).start()
+            activeIsA = !activeIsA
+        }
+
+        currentMenuRes = CONTROL_MENU_MARKER
+        selectedMenuBtnId = R.id.menuBarControl
+    }
+
+    private fun setNavControlContent(nav: NavigationView, title: String) {
+        nav.getHeaderView(0)?.visibility = View.GONE
+        nav.menu.clear()
+        nav.setNavigationItemSelectedListener(null)
+        removeCustomViewsFromNav(nav)
+        controlView?.let { v ->
+            if (v.parent != null) {
+                (v.parent as ViewGroup).removeView(v)
+            }
+            v.tag = "control_view"
+            val lp = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            )
+            nav.addView(v, lp)
+        }
+        val primaryColor = android.graphics.Color.parseColor(panelConfig.primaryColorHex)
+        controlView?.findViewById<View>(R.id.controlHeader)?.setBackgroundColor(primaryColor)
+    }
+
+    private fun setupControlCheckboxes() {
+        val cv = controlView ?: return
+        var imageChecked = false
+        var waveformChecked = false
+
+        val imageCheckbox = cv.findViewById<View>(R.id.controlImageCheckbox)
+        val imageRow = cv.findViewById<View>(R.id.controlImageRow)
+        val waveformCheckbox = cv.findViewById<View>(R.id.controlWaveformCheckbox)
+        val waveformRow = cv.findViewById<View>(R.id.controlWaveformRow)
+
+        fun updateImageCheckbox() {
+            imageCheckbox.setBackgroundResource(
+                if (imageChecked) R.drawable.bg_checkbox_checked
+                else R.drawable.bg_checkbox_unchecked
+            )
+        }
+
+        fun updateWaveformCheckbox() {
+            waveformCheckbox.setBackgroundResource(
+                if (waveformChecked) R.drawable.bg_checkbox_checked
+                else R.drawable.bg_checkbox_unchecked
+            )
+        }
+
+        imageRow.setOnClickListener {
+            imageChecked = !imageChecked
+            updateImageCheckbox()
+            AppLogger.i("MainActivity", "控件-图像: ${if (imageChecked) "开" else "关"}")
+        }
+
+        waveformRow.setOnClickListener {
+            waveformChecked = !waveformChecked
+            updateWaveformCheckbox()
+            AppLogger.i("MainActivity", "控件-波形图: ${if (waveformChecked) "开" else "关"}")
         }
     }
 
@@ -2691,7 +2839,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val commandListener = NavigationView.OnNavigationItemSelectedListener { item -> AppLogger.i("MainActivity", "命令: ${item.title}"); closeMenu(); true }
-    private val controlListener = NavigationView.OnNavigationItemSelectedListener { item -> AppLogger.i("MainActivity", "控件: ${item.title}"); closeMenu(); true }
     private val connectionListener = NavigationView.OnNavigationItemSelectedListener { item ->
         when (item.itemId) {
             R.id.conn_connect -> { handleConnectToggle(findViewById(R.id.menuBarConnect)) }

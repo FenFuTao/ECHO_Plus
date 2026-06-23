@@ -4,10 +4,25 @@
     android:height="32dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
+
+    <!-- 左下角矩形（最上层）—— 4个角r=2圆角 -->
     <path
-        android:fillColor="#9E9E9E"
-        android:pathData="M4,4h16v16H4z"
-        android:strokeWidth="2"
+        android:pathData="M3.5,9.5L12.5,9.5a2,2 0 0,1 2,2L14.5,20.5a2,2 0 0,1 -2,2L3.5,22.5a2,2 0 0,1 -2,-2L1.5,11.5a2,2 0 0,1 2,-2Z"
+        android:strokeWidth="1.5"
         android:strokeColor="#9E9E9E"
-        android:fillAlpha="0.3" />
+        android:fillColor="#00000000" />
+
+    <!-- 中间矩形（中层）—— 留2空隙，3个角圆角 -->
+    <path
+        android:pathData="M5.5,7.5L5.5,6.5a1,1 0 0,1 1,-1L16.5,5.5a2,2 0 0,1 2,2L18.5,17.5a1,1 0 0,1 -1,1L16.5,18.5"
+        android:strokeWidth="1.5"
+        android:strokeColor="#9E9E9E"
+        android:fillColor="#00000000" />
+
+    <!-- 右上角矩形（最下层）—— 留2空隙，3个角圆角 -->
+    <path
+        android:pathData="M9.5,3.5L9.5,2.5a1,1 0 0,1 1,-1L20.5,1.5a2,2 0 0,1 2,2L22.5,13.5a1,1 0 0,1 -1,1L20.5,14.5"
+        android:strokeWidth="1.5"
+        android:strokeColor="#9E9E9E"
+        android:fillColor="#00000000" />
 </vector>

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 最外层虚化光晕（最大、最透明）—— 内缩 1dp 让灰色边框包裹在外面 -->
+    <item android:left="1dp" android:top="1dp" android:right="1dp" android:bottom="1dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#1A4CAF50" />
+            <corners android:radius="4dp" />
+        </shape>
+    </item>
+    <!-- 中间层虚化光晕 -->
+    <item android:left="3dp" android:top="3dp" android:right="3dp" android:bottom="3dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#334CAF50" />
+            <corners android:radius="3dp" />
+        </shape>
+    </item>
+    <!-- 内层虚化光晕 -->
+    <item android:left="5dp" android:top="5dp" android:right="5dp" android:bottom="5dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#664CAF50" />
+            <corners android:radius="2dp" />
+        </shape>
+    </item>
+    <!-- 中心实心绿色矩形 -->
+    <item android:left="7dp" android:top="7dp" android:right="7dp" android:bottom="7dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#4CAF50" />
+            <corners android:radius="2dp" />
+        </shape>
+    </item>
+    <!-- 顶层灰色边框：透明填充 + 灰色描边，全尺寸包裹在所有绿色层之上 -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#00000000" />
+            <stroke
+                android:width="2dp"
+                android:color="#BDBDBD" />
+            <corners android:radius="4dp" />
+        </shape>
+    </item>
+</layer-list>

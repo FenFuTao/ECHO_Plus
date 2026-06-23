@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/white">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingBottom="12dp">
+
+        <!-- 顶端标题栏 -->
+        <LinearLayout
+            android:id="@+id/controlHeader"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp">
+
+            <TextView
+                android:id="@+id/controlHeaderTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/nav_header_control"
+                android:textColor="@android:color/white"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- 图像 复选框 -->
+        <LinearLayout
+            android:id="@+id/controlImageRow"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:clickable="true"
+            android:focusable="true">
+
+            <View
+                android:id="@+id/controlImageCheckbox"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:background="@drawable/bg_checkbox_unchecked"
+                android:clickable="false"
+                android:focusable="false" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/control_image"
+                android:textColor="#424242"
+                android:textSize="15sp"
+                android:layout_marginStart="12dp" />
+        </LinearLayout>
+
+        <!-- 分割线 -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#E0E0E0" />
+
+        <!-- 波形图 复选框 -->
+        <LinearLayout
+            android:id="@+id/controlWaveformRow"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:clickable="true"
+            android:focusable="true">
+
+            <View
+                android:id="@+id/controlWaveformCheckbox"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:background="@drawable/bg_checkbox_unchecked"
+                android:clickable="false"
+                android:focusable="false" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/control_waveform"
+                android:textColor="#424242"
+                android:textSize="15sp"
+                android:layout_marginStart="12dp" />
+        </LinearLayout>
+
+        <!-- 分割线 -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#E0E0E0" />
+
+    </LinearLayout>
+</ScrollView>

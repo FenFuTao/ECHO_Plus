@@ -66,6 +66,18 @@ class JustFloatEngine : DataEngine {
     /** 用于累积图片前导帧的 int 缓冲区 */
     private val pendingIntBuffer = mutableListOf<Int>()
 
+    // ── 图像前导帧锁定 ──
+    /** 是否已完成图像前导帧锁定 */
+    private var imagePreambleLocked: Boolean = false
+    /** 锁定的前导帧参数（用于比较是否属于同一图像流） */
+    private var lockedImageId: Int = 0
+    private var lockedImageSize: Int = 0
+    private var lockedImageWidth: Int = 0
+    private var lockedImageHeight: Int = 0
+    private var lockedImageFormat: Int = 0
+    /** 静默丢弃模式：前导帧不匹配时，仍按图像格式消耗字节但不产生输出 */
+    private var imageSkipSilently: Boolean = false
+
     override fun feed(connectionId: String, data: ByteArray): List<DataEngineOutput> {
         if (data.isEmpty()) return emptyList()
 
@@ -115,7 +127,8 @@ class JustFloatEngine : DataEngine {
         val needed = imageSize - imageBytesReceived
         if (needed > 0 && data.isNotEmpty()) {
             val fromData = minOf(data.size, needed)
-            if (!imagePacketFiltered) {
+            // ★ 静默丢弃模式或过滤模式：消耗字节但不累积
+            if (!imagePacketFiltered && !imageSkipSilently) {
                 imageDataBuffer.write(data, 0, fromData)
             }
             imageBytesReceived += fromData
@@ -150,7 +163,8 @@ class JustFloatEngine : DataEngine {
         val needed = imageSize - imageBytesReceived
         val fromBuf = minOf(buf.size, needed)
         if (fromBuf > 0) {
-            if (!imagePacketFiltered) {
+            // ★ 静默丢弃模式或过滤模式：消耗字节但不累积
+            if (!imagePacketFiltered && !imageSkipSilently) {
                 imageDataBuffer.write(buf, 0, fromBuf)
             }
             imageBytesReceived += fromBuf
@@ -163,10 +177,12 @@ class JustFloatEngine : DataEngine {
 
     /** 完成图像接收，输出 IMAGE_PACKET，重置状态 */
     private fun finishImageForJustFloat(results: MutableList<DataEngineOutput>) {
-        if (!imagePacketFiltered) {
+        // ★ 静默丢弃模式：不产生任何输出，仅重置状态
+        if (!imagePacketFiltered && !imageSkipSilently) {
             results.addAll(buildImagePacketOutput(connectionId = ""))
         }
         imagePending = false
+        imageSkipSilently = false
         imageBytesReceived = 0
         imageDataBuffer.reset()
     }
@@ -201,15 +217,47 @@ class JustFloatEngine : DataEngine {
                 val extendedFrame = buf.copyOfRange(0, preambleSize)
                 val isImagePreamble = checkImagePreamble(extendedFrame)
                 if (isImagePreamble != null) {
-                    // 图像过滤开启：跳过图片处理，将前导帧的 5 个 int 视为普通浮点数据
-                    if (imagePacketFiltered) {
-                        // 过滤模式：静默跳过前导帧和随后的图像数据
-                        imageId = isImagePreamble[0]
-                        imageSize = isImagePreamble[1]
-                        imageWidth = isImagePreamble[2]
-                        imageHeight = isImagePreamble[3]
-                        imageFormat = isImagePreamble[4]
+                    val newId = isImagePreamble[0]
+                    val newSize = isImagePreamble[1]
+                    val newWidth = isImagePreamble[2]
+                    val newHeight = isImagePreamble[3]
+                    val newFormat = isImagePreamble[4]
 
+                    // ── 图像前导帧锁定逻辑 ──
+                    if (!imagePreambleLocked) {
+                        // 首次图像帧：锁定前导帧参数
+                        imagePreambleLocked = true
+                        lockedImageId = newId
+                        lockedImageSize = newSize
+                        lockedImageWidth = newWidth
+                        lockedImageHeight = newHeight
+                        lockedImageFormat = newFormat
+                        imageSkipSilently = false
+                    } else {
+                        // 已锁定：检查新前导帧是否匹配
+                        val matches = newId == lockedImageId &&
+                            newSize == lockedImageSize &&
+                            newWidth == lockedImageWidth &&
+                            newHeight == lockedImageHeight &&
+                            newFormat == lockedImageFormat
+                        if (!matches) {
+                            // 不匹配：进入静默丢弃模式，仍按图像格式消耗字节但不输出
+                            imageSkipSilently = true
+                            AppLogger.i("JustFloatEngine",
+                                "图像前导帧不匹配（ID=$newId, 当前锁定ID=$lockedImageId），静默丢弃")
+                        } else {
+                            imageSkipSilently = false
+                        }
+                    }
+
+                    imageId = newId
+                    imageSize = newSize
+                    imageWidth = newWidth
+                    imageHeight = newHeight
+                    imageFormat = newFormat
+
+                    // 图像过滤开启：静默跳过前导帧和随后的图像数据
+                    if (imagePacketFiltered) {
                         imagePending = true
                         imageBytesReceived = 0
 
@@ -227,15 +275,8 @@ class JustFloatEngine : DataEngine {
                         return results // 等待图像数据到来后跳过
                     }
 
-                    // 是图片前导帧
-                    imageId = isImagePreamble[0]
-                    imageSize = isImagePreamble[1]
-                    imageWidth = isImagePreamble[2]
-                    imageHeight = isImagePreamble[3]
-                    imageFormat = isImagePreamble[4]
-
                     AppLogger.i("JustFloatEngine",
-                        "检测到图片前导帧: ID=$imageId, SIZE=$imageSize, WIDTH=$imageWidth, HEIGHT=$imageHeight, FORMAT=$imageFormat")
+                        "检测到图片前导帧: ID=$imageId, SIZE=$imageSize, WIDTH=$imageWidth, HEIGHT=$imageHeight, FORMAT=$imageFormat${if (imageSkipSilently) " [静默丢弃]" else ""}")
 
                     imagePending = true
                     imageBytesReceived = 0
@@ -251,8 +292,11 @@ class JustFloatEngine : DataEngine {
 
                     // 如果图片大小为 0，立即完成
                     if (imageSize == 0) {
-                        results.addAll(buildImagePacketOutput(connectionId))
+                        if (!imageSkipSilently) {
+                            results.addAll(buildImagePacketOutput(connectionId))
+                        }
                         imagePending = false
+                        imageSkipSilently = false
                         searchStart = 0
                         continue
                     }
@@ -447,12 +491,21 @@ class JustFloatEngine : DataEngine {
         imageFormat = 0
         imageBytesReceived = 0
         pendingIntBuffer.clear()
+        // ★ 重置图像前导帧锁定
+        imagePreambleLocked = false
+        lockedImageId = 0
+        lockedImageSize = 0
+        lockedImageWidth = 0
+        lockedImageHeight = 0
+        lockedImageFormat = 0
+        imageSkipSilently = false
         AppLogger.i("JustFloatEngine", "引擎状态已重置")
     }
     override fun setImagePacketFiltered(filtered: Boolean) {
         imagePacketFiltered = filtered
         if (filtered && imagePending) {
             imagePending = false
+            imageSkipSilently = false
             imageBytesReceived = 0
             imageDataBuffer.reset()
         }

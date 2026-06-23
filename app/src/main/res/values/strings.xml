@@ -22,10 +22,8 @@
     <string name="cmd_btn2">命令二</string>
     <string name="cmd_btn3">命令三</string>
     <string name="cmd_btn4">命令四</string>
-    <string name="ctrl_btn1">控件一</string>
-    <string name="ctrl_btn2">控件二</string>
-    <string name="ctrl_btn3">控件三</string>
-    <string name="ctrl_btn4">控件四</string>
+    <string name="control_image">图像</string>
+    <string name="control_waveform">波形图</string>
     <string name="conn_connect">连接设备</string>
     <string name="conn_disconnect">断开设备</string>
     <string name="param_header_title">数据</string>

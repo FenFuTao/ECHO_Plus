@@ -76,6 +76,12 @@ class ParamBuffer {
     /** 当前缓存条目数 */
     val entryCount: Int get() = entries.size
 
+    /** 解析结果：前缀 + 值列表 */
+    private data class ParsedLine(
+        val prefix: String,
+        val values: List<String>
+    )
+
     /** 获取全部缓存条目的只读副本 */
     fun getEntries(): List<ParamEntry> = entries.toList()
 
@@ -84,23 +90,24 @@ class ParamBuffer {
      *
      * @param engineName 引擎名称（"FireWater" / "JustFloat"）
      * @param text 已解码为 UTF-8 的可读文本（经过 hexToString 转换后）
-     * @return true 表示该帧数据被接受并写入缓存，false 表示被丢弃
+     * @return true 该帧数据被接受并写入缓存，false 表示被丢弃
      */
     fun feed(engineName: String, text: String): Boolean {
         if (text.isBlank()) return false
 
-        val values = when (engineName) {
+        val parsed = when (engineName) {
             "FireWater" -> parseFireWaterLine(text)
             "JustFloat" -> parseJustFloatLine(text)
             else -> return false
         }
 
-        if (values == null || values.isEmpty()) return false
+        if (parsed == null || parsed.values.isEmpty()) return false
 
-        // ── 首次有效数据：锁定参数数量 ──
+        // ── 首次有效数据：锁定参数数量 + 数据名前缀 ──
         if (!isLocked) {
             isLocked = true
-            expectedCount = values.size
+            expectedCount = parsed.values.size
+            lastPrefix = parsed.prefix
             // 若 paramNames 尚未由解析方法填充，生成默认名称
             if (paramNames.isEmpty()) {
                 for (i in 0 until expectedCount) {
@@ -108,16 +115,21 @@ class ParamBuffer {
                 }
             }
             // 写入首帧
-            entries.add(ParamEntry(System.currentTimeMillis(), values))
+            entries.add(ParamEntry(System.currentTimeMillis(), parsed.values))
             return true
         }
 
         // ── 参数数量不匹配则丢弃 ──
-        if (values.size != expectedCount) return false
+        if (parsed.values.size != expectedCount) return false
+
+        // ── 数据名前缀不匹配则丢弃 ──
+        //    "xxx:12,23" 与 "yyy:12,23" 视为不同数据帧
+        //    空前缀 ":12,23" 与 无冒号 "12,23" 视为相同（prefix均为""）
+        if (parsed.prefix != lastPrefix) return false
 
         // ── 写入缓存 ──
         val now = System.currentTimeMillis()
-        entries.add(ParamEntry(now, values))
+        entries.add(ParamEntry(now, parsed.values))
         if (entries.size > maxEntries) {
             entries.removeAt(0)
         }
@@ -129,7 +141,7 @@ class ParamBuffer {
     /**
      * 解析 FireWater 行格式：`prefix:val1,val2,...,valN`
      *
-     * 例如：`data1:12.6,58,65` → ["12.6", "58", "65"]
+     * 例如：`data1:12.6,58,65` → ParsedLine(prefix="data1", values=["12.6", "58", "65"])
      *
      * 规则：
      * - 按 `:` 分割，前段为前缀，后段为逗号分隔的值列表
@@ -137,7 +149,7 @@ class ParamBuffer {
      * - 排除以 `[` 开头的行（提示信息，如 "[缓冲区溢出]"）
      * - 首次锁定时以前缀生成参数名称 prefix_ch0, prefix_ch1, ...
      */
-    private fun parseFireWaterLine(line: String): List<String>? {
+    private fun parseFireWaterLine(line: String): ParsedLine? {
         val values: List<String>
         val prefix: String
 
@@ -178,27 +190,26 @@ class ParamBuffer {
         // 首次锁定时填充参数名称
         if (!isLocked) {
             paramNames.clear()
-            lastPrefix = prefix
             for (i in values.indices) {
                 paramNames.add("${prefix}_ch$i")
             }
         }
 
-        return values
+        return ParsedLine(prefix = prefix, values = values)
     }
 
     /**
      * 解析 JustFloat 帧行格式：`N通道: val1, val2, ..., valN`
      *
      * 例如：`3通道: 12.600000, 58.000000, 65.000000`
-     *      → ["12.600000", "58.000000", "65.000000"]
+     *      → ParsedLine(prefix="", values=["12.600000", "58.000000", "65.000000"])
      *
      * 规则：
      * - 按 `:` 分割，后段为逗号分隔的浮点数值列表
      * - 跳过以 `[` 或 `图片` 开头的非数据行
      * - 首次锁定时生成参数名称 ch0, ch1, ...
      */
-    private fun parseJustFloatLine(line: String): List<String>? {
+    private fun parseJustFloatLine(line: String): ParsedLine? {
         // 跳过非数据行（提示信息）
         if (line.startsWith("[") || line.startsWith("图片")) return null
 
@@ -220,13 +231,12 @@ class ParamBuffer {
         // 首次锁定时填充参数名称
         if (!isLocked) {
             paramNames.clear()
-            lastPrefix = ""
             for (i in values.indices) {
                 paramNames.add("ch$i")
             }
         }
 
-        return values
+        return ParsedLine(prefix = "", values = values)
     }
 
     /**
