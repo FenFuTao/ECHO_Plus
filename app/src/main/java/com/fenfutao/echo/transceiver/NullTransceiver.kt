@@ -38,6 +38,10 @@ class NullTransceiver(
         dataListener = listener
     }
 
+    override fun setOnRawDataReceivedListener(listener: ((ByteArray) -> Unit)?) {
+        // Null 收发器不接收数据
+    }
+
     override fun setOnStateChangedListener(listener: ((Boolean, String) -> Unit)?) {
         stateListener = listener
     }

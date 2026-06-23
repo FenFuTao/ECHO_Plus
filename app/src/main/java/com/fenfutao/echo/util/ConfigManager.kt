@@ -35,6 +35,10 @@ data class PanelConfig(
     var outputTxHighlight: Boolean = false,
     var outputFontSize: Float = 0f,
     var outputUseGbk: Boolean = false,
+    // ── Rx 过滤 ──
+    var rxShowSampleData: Boolean = true,
+    var rxShowImagePacket: Boolean = true,
+
     // ── 发送区工具栏 ──
     var sendHexMode: Boolean = false,
     var sendLineEndingSelection: Int = 0,
@@ -69,6 +73,9 @@ data class PanelConfig(
         outputTxHighlight = def.outputTxHighlight
         outputFontSize = def.outputFontSize
         outputUseGbk = def.outputUseGbk
+        rxShowSampleData = def.rxShowSampleData
+        rxShowImagePacket = def.rxShowImagePacket
+
         sendHexMode = def.sendHexMode
         sendLineEndingSelection = def.sendLineEndingSelection
         sendBufferText = def.sendBufferText
@@ -107,6 +114,9 @@ data class PanelConfig(
                     outputTxHighlight = it.optBoolean("outputTxHighlight", d.outputTxHighlight)
                     outputFontSize = it.optDouble("outputFontSize", d.outputFontSize.toDouble()).toFloat()
                     outputUseGbk = it.optBoolean("outputUseGbk", d.outputUseGbk)
+                    rxShowSampleData = it.optBoolean("rxShowSampleData", d.rxShowSampleData)
+                    rxShowImagePacket = it.optBoolean("rxShowImagePacket", d.rxShowImagePacket)
+
                     sendHexMode = it.optBoolean("sendHexMode", d.sendHexMode)
                     sendLineEndingSelection = it.optInt("sendLineEndingSelection", d.sendLineEndingSelection)
                     sendBufferText = it.optString("sendBufferText", d.sendBufferText)
@@ -141,6 +151,9 @@ data class PanelConfig(
         put("outputTxHighlight", outputTxHighlight)
         put("outputFontSize", outputFontSize.toDouble())
         put("outputUseGbk", outputUseGbk)
+        put("rxShowSampleData", rxShowSampleData)
+        put("rxShowImagePacket", rxShowImagePacket)
+
         put("sendHexMode", sendHexMode)
         put("sendLineEndingSelection", sendLineEndingSelection)
         put("sendBufferText", sendBufferText)

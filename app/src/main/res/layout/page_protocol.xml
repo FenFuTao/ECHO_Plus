@@ -417,6 +417,37 @@
                 android:background="#E0E0E0"
                 android:layout_marginStart="16dp" android:layout_marginEnd="16dp"
                 android:layout_marginTop="8dp" android:layout_marginBottom="8dp" />
+
+            <!-- 本机IP信息显示 -->
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="4dp" android:paddingBottom="4dp"
+                android:text="@string/local_ip_title"
+                android:textColor="#FF15599A" android:textSize="15sp" android:textStyle="bold" />
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical"
+                android:paddingStart="16dp" android:paddingEnd="16dp"
+                android:paddingTop="2dp" android:paddingBottom="4dp">
+                <TextView android:id="@+id/localIpInfo"
+                    android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:textSize="12sp" android:textColor="#424242"
+                    android:lineSpacingExtra="3dp" />
+                <TextView android:id="@+id/refreshIpBtn"
+                    android:layout_width="wrap_content" android:layout_height="28dp"
+                    android:gravity="center"
+                    android:paddingStart="12dp" android:paddingEnd="12dp"
+                    android:text="@string/local_ip_refresh"
+                    android:textSize="12sp" android:textColor="#FF15599A"
+                    android:background="@drawable/bg_chip_selector"
+                    android:clickable="true" android:focusable="true" />
+            </LinearLayout>
+
+            <View android:layout_width="match_parent" android:layout_height="1dp"
+                android:background="#E0E0E0"
+                android:layout_marginStart="16dp" android:layout_marginEnd="16dp"
+                android:layout_marginTop="8dp" android:layout_marginBottom="8dp" />
         </LinearLayout>
 
     </LinearLayout>

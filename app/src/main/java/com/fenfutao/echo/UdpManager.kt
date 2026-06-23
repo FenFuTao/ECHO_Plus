@@ -24,6 +24,10 @@ class UdpManager {
         fun onDataReceived(data: String)
     }
 
+    fun interface OnRawDataReceivedListener {
+        fun onRawDataReceived(data: ByteArray)
+    }
+
     @Volatile
     private var isConnected = false
     @Volatile
@@ -36,6 +40,7 @@ class UdpManager {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var stateListener: OnConnectionStateListener? = null
     private var dataListener: OnDataReceivedListener? = null
+    private var rawDataListener: OnRawDataReceivedListener? = null
 
     fun isConnecting(): Boolean = isConnecting
 
@@ -45,6 +50,10 @@ class UdpManager {
 
     fun setOnDataReceivedListener(listener: OnDataReceivedListener) {
         this.dataListener = listener
+    }
+
+    fun setOnRawDataReceivedListener(listener: OnRawDataReceivedListener) {
+        this.rawDataListener = listener
     }
 
     fun isConnected(): Boolean = isConnected
@@ -139,6 +148,10 @@ class UdpManager {
                     if (!isConnected) break
 
                     val len = packet.length
+                    // ★ 原始字节回调（供协议引擎使用），在 IO 线程直接回调避免主线程拥塞
+                    val rawCopy = buf.copyOf(len)
+                    rawDataListener?.onRawDataReceived(rawCopy)
+
                     val chunk = String(buf, 0, len, Charsets.UTF_8)
                     sb.append(chunk)
                     // 提取所有完整行，剩余部分留在缓冲区

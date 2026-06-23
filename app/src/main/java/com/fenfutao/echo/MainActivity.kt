@@ -1,4 +1,4 @@
-﻿package com.fenfutao.echo
+package com.fenfutao.echo
 
 import android.os.Build
 import android.os.Bundle
@@ -13,6 +13,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import android.widget.PopupWindow
 import androidx.core.view.WindowCompat
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
@@ -30,6 +31,14 @@ import androidx.activity.OnBackPressedCallback
 import androidx.core.content.res.ResourcesCompat
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import com.fenfutao.echo.dataengine.DataEngine
+import com.fenfutao.echo.dataengine.DataEngineOutput
+import com.fenfutao.echo.dataengine.OutputType
+import com.fenfutao.echo.dataengine.FireWaterEngine
+import com.fenfutao.echo.dataengine.JustFloatEngine
+import com.fenfutao.echo.dataengine.RawDataEngine
+import com.fenfutao.echo.dataengine.ParamBuffer
+import com.fenfutao.echo.dataengine.ImageBuffer
 import com.fenfutao.echo.transceiver.DataTransceiver
 import com.fenfutao.echo.transceiver.NullTransceiver
 import com.fenfutao.echo.transceiver.TcpClientTransceiver
@@ -71,9 +80,24 @@ class MainActivity : AppCompatActivity() {
     // ── 输出批量刷新优化 ──
     private val outputHandler = Handler(Looper.getMainLooper())
     private var outputFlushPending = false
-    /** 上次已刷新到 outputText 的条目数 */
+
+    /** 已渲染到显示区的条目计数（从 outputDataEntries 开头起算，removeAt(0) 时同步递减） */
     private var lastDisplayedEntryCount = 0
+    /**
+     * 单显示缓冲区 — TextView 直接使用此 SpannableStringBuilder。
+     * 递增追加新条目，超限时从开头裁剪最旧行。
+     * 无需多段环形缓冲区：TextView 自带高效的增量布局。
+     */
+    private val displayBuffer = SpannableStringBuilder()
+    /** 显示文本最大字符数，超限时从开头裁剪 */
+    private val MAX_DISPLAY_CHARS = MAX_OUTPUT_TEXT_LENGTH / 2
+
     private val outputFlushRunnable = Runnable { doFlushOutput() }
+
+    /** FPS 副标题定时刷新 */
+    private val fpsUpdateRunnable = Runnable { updateParamHeaderTitle() }
+    /** FPS 刷新间隔（毫秒） */
+    private val fpsUpdateIntervalMs = 500L
 
     // ── 统一数据收发接口：各协议封装为 DataTransceiver ──
     private val tcpClientTransceiver = TcpClientTransceiver()
@@ -82,6 +106,20 @@ class MainActivity : AppCompatActivity() {
     private val udpTransceiver = UdpTransceiver()
     private val demoTransceiver = NullTransceiver("Demo")
     private var currentTransceiver: DataTransceiver = serialTransceiver
+
+    // ── 协议引擎 ──
+    private var currentDataEngine: DataEngine = FireWaterEngine()
+    private val fireWaterEngine = FireWaterEngine()
+    private val justFloatEngine = JustFloatEngine()
+    private val rawDataEngine = RawDataEngine()
+    /** JustFloat 强制使用 Hex 模式，禁止切换到 Abc */
+    private var justFloatForceHex = false
+
+    /** 参数缓存区：记录首次连接锁定的回传参数列表 */
+    private val paramBuffer = ParamBuffer()
+
+    /** 图像缓存区：最新一帧图像的帧头 + hex 数据 */
+    private val imageBuffer = ImageBuffer()
 
     private var panelConfig = PanelConfig()
 
@@ -101,14 +139,29 @@ class MainActivity : AppCompatActivity() {
         val timestampMs: Long?,
         val isTx: Boolean,
         /** 追加时根据 Rx/Tx 开关决定；false 表示隐藏，永不显示 */
-        val visible: Boolean
+        val visible: Boolean,
+        /** RawData 等引擎产生的原始字节，Abc 模式需转义控制字符 */
+        val escapeControlChars: Boolean = false,
+        /** 输出类型，用于 Rx 过滤菜单区分采样数据包和图像数据包 */
+        val type: OutputType = OutputType.TEXT,
+        /** 是否为合规采样数据帧（受 rxShowSampleData 控制） */
+        val isSamplingData: Boolean = false
     )
 
     private val outputDataEntries = mutableListOf<OutputEntry>()
     private lateinit var btnAbcHex: android.view.View
     private lateinit var btnTimestamp: android.view.View
     private lateinit var btnRx: android.view.View
+    private lateinit var btnRxDropdown: android.view.View
     private lateinit var btnTx: android.view.View
+    /** Rx 过滤器状态（默认从 panelConfig 加载） */
+    private var rxShowSampleData: Boolean
+        get() = panelConfig.rxShowSampleData
+        set(v) { panelConfig.rxShowSampleData = v; ConfigManager.saveConfig(panelConfig) }
+    private var rxShowImagePacket: Boolean
+        get() = panelConfig.rxShowImagePacket
+        set(v) { panelConfig.rxShowImagePacket = v; ConfigManager.saveConfig(panelConfig) }
+
     private lateinit var btnFontInc: android.view.View
     private lateinit var btnFontDec: android.view.View
     private lateinit var btnEncoding: android.view.View
@@ -116,6 +169,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var sendEditText: android.widget.EditText
     private lateinit var sendAbcHexBtn: android.view.View
     private lateinit var lineEndingSpinner: Spinner
+
+    /** 数据引擎 Spinner 引用（用于连接时锁定/断开解锁） */
+    private var dataEngineSpinner: Spinner? = null
     /** 标记当前 TextWatcher 的 afterTextChanged 是否由程序主动 setText 触发 */
     private var textWatcherSuspended = false
 
@@ -150,10 +206,94 @@ class MainActivity : AppCompatActivity() {
         private const val MIN_RIGHT_WIDTH_DP = 80
         /** 分割线拖拽刷新防抖间隔 (ms) */
         private const val LAYOUT_REFRESH_INTERVAL_MS = 16L // ~60fps
-        /** 输出窗口最大缓存条目数 */
-        private const val MAX_OUTPUT_ENTRIES = 10000
+        /** 输出窗口后台数据缓冲最大条目数 */
+        private const val MAX_OUTPUT_ENTRIES = 2500
+        /** 输出窗口显示文本最大字符数，超限时截断前半部分 */
+        private const val MAX_OUTPUT_TEXT_LENGTH = 500000
         /** 输出刷新批处理间隔 (ms)，约 30fps */
         private const val OUTPUT_FLUSH_INTERVAL_MS = 33L
+
+        /** 16 色预定义调色板，按顺序分配给 In0 ~ In15，超出则循环 */
+        val PARAM_COLORS = arrayOf(
+            "#E53935", // 红
+            "#1E88E5", // 蓝
+            "#43A047", // 绿
+            "#FB8C00", // 橙
+            "#8E24AA", // 紫
+            "#00ACC1", // 青
+            "#F4511E", // 深橙
+            "#3949AB", // 靛蓝
+            "#C0CA33", // 黄绿
+            "#00BCD4", // 浅青
+            "#FF4081", // 粉红
+            "#7CB342", // 草绿
+            "#FF7043", // 珊瑚
+            "#5C6BC0", // 紫蓝
+            "#26A69A", // 青绿
+            "#EC407A"  // 玫瑰红
+        )
+
+        /**
+         * 将字符串编码为 UTF-8 字节后再转为连续十六进制字符串
+         * 例: "AB" -> "4142"
+         */
+        fun String.toHex(): String =
+            this.toByteArray(Charsets.UTF_8).joinToString("") { "%02X".format(it) }
+
+        /**
+         * 将连续十六进制字符串解码为字节数组
+         * 例: "4142" -> [0x41, 0x42]
+         * 自动忽略空格、制表符、换行符等空白字符
+         */
+        fun String.hexToBytes(): ByteArray {
+            val clean = this.filter { it !in " \t\n\r" }
+            if (clean.isEmpty() || clean.length % 2 != 0) return byteArrayOf()
+            return clean.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        }
+
+        /**
+         * 将连续十六进制字符串解码为指定编码的文本
+         * @param useGbk true 使用 GBK，false 使用 UTF-8
+         */
+        fun String.hexToString(useGbk: Boolean): String {
+            val bytes = this.hexToBytes()
+            return if (useGbk) {
+                java.lang.String(bytes, java.nio.charset.Charset.forName("GBK")).toString()
+            } else {
+                bytes.decodeToString()
+            }
+        }
+
+        /**
+         * 将字符串中的控制字符转义为可见的转义序列
+         * 例: "A\nB" → "A\\nB"
+         */
+        fun String.escapeDisplay(): String {
+            val sb = StringBuilder(length)
+            for (c in this) {
+                when (c) {
+                    '\n' -> sb.append("\\n")
+                    '\r' -> sb.append("\\r")
+                    '\t' -> sb.append("\\t")
+                    '\u0000' -> sb.append("\\0")
+                    '\u0007' -> sb.append("\\a")   // Bell
+                    '\u0008' -> sb.append("\\b")   // Backspace
+                    '\u000C' -> sb.append("\\f")   // Form Feed
+                    '\u000B' -> sb.append("\\v")   // Vertical Tab
+                    '\u001B' -> sb.append("\\e")   // Escape
+                    else -> {
+                        val code = c.code
+                        // 其他控制字符 (0x01-0x1F 中未列出的, 以及 0x7F DEL) 显示为空格
+                        if (code in 0x01..0x1F || code == 0x7F) {
+                            sb.append(' ')
+                        } else {
+                            sb.append(c)
+                        }
+                    }
+                }
+            }
+            return sb.toString()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -195,6 +335,146 @@ class MainActivity : AppCompatActivity() {
 
         // 必须优先加载配置，后续 UI 初始化才能读到已保存的状态
         panelConfig = ConfigManager.loadConfig()
+
+        // 设置参数列表页标题框背景色（与协议页标题框一致）
+        val paramHeader = findViewById<View>(R.id.paramHeader)
+        val primaryColor = android.graphics.Color.parseColor(panelConfig.primaryColorHex)
+        paramHeader.setBackgroundColor(primaryColor)
+
+        // 初始化参数标题文本（刚启动时未锁定，不显示位数）
+        updateParamHeaderTitle()
+
+        // 参数列表页标题栏右侧「E」按钮：清除缓存并重新学习参数位数
+        val paramRelearnBtn = findViewById<View>(R.id.paramRelearnBtn)
+        paramRelearnBtn.setOnTouchListener { v, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> { v.animate().scaleX(1.20f).scaleY(1.20f).setDuration(50).start(); true }
+                MotionEvent.ACTION_MOVE -> {
+                    val ib = e.x in 0f..v.width.toFloat() && e.y in 0f..v.height.toFloat()
+                    if (!ib && v.scaleX > 1.0f) { v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(50).start() }
+                    else if (ib && v.scaleX <= 1.0f) { v.animate().scaleX(1.20f).scaleY(1.20f).setDuration(50).start() }
+                    true
+                }
+                MotionEvent.ACTION_UP -> { v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(50).withEndAction { v.performClick() }.start(); true }
+                MotionEvent.ACTION_CANCEL -> { v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(50).start(); true }
+                else -> true
+            }
+        }
+        paramRelearnBtn.setOnClickListener {
+            val dialog = AlertDialog.Builder(this@MainActivity)
+                .setTitle("警告")
+                .setMessage("所有采样数据会被清除，不可恢复\n\n您确定要这么做吗？")
+                .setNegativeButton("确认") { _, _ ->
+                    paramBuffer.reset()
+                    imageBuffer.reset()
+                    updateParamHeaderTitle()
+                    refreshParamViews()
+                    showToastShort("参数缓存已清除，等待新数据重新锁定")
+                }
+                .setPositiveButton("取消", null)
+                .create()
+            dialog.setOnShowListener {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(
+                    android.graphics.Color.parseColor("#9E9E9E")
+                )
+            }
+            dialog.show()
+        }
+    }
+
+    /**
+     * 更新参数列表标题文本。
+     * 若参数缓存已锁定，显示 "数据 xx"（xx 为锁定的参数位数）；
+     * 若未锁定，仅显示 "数据"。
+     */
+    private fun updateParamHeaderTitle() {
+        val titleView = findViewById<TextView>(R.id.paramHeaderTitle)
+        val subHeader = findViewById<View>(R.id.paramSubHeader)
+        val leftView = findViewById<TextView>(R.id.paramSubHeaderLeft)
+        val fpsView = findViewById<TextView>(R.id.paramSubHeaderFps)
+        titleView.text = getString(R.string.param_header_title)
+
+        if (paramBuffer.isLocked) {
+            val prefix = paramBuffer.lastPrefix
+            val count = paramBuffer.expectedCount
+            val fps = paramBuffer.getEstimatedFps()
+            leftView.text = if (prefix.isEmpty()) "数据量: $count" else "$prefix    数据量: $count"
+            fpsView.text = "FPS: $fps"
+            subHeader.visibility = View.VISIBLE
+            // ★ 每 0.5s 重新调度刷新 FPS
+            outputHandler.removeCallbacks(fpsUpdateRunnable)
+            outputHandler.postDelayed(fpsUpdateRunnable, fpsUpdateIntervalMs)
+        } else {
+            subHeader.visibility = View.GONE
+            outputHandler.removeCallbacks(fpsUpdateRunnable)
+        }
+    }
+
+    /**
+     * 刷新参数列表显示。
+     * 根据 paramBuffer 的最新条目，在 paramListView 中构建每行：
+     *   In{序号}    数值（保留6位小数）
+     */
+    private fun refreshParamViews() {
+        val listView = findViewById<LinearLayout>(R.id.paramListView)
+        listView.removeAllViews()
+
+        if (!paramBuffer.isLocked) return
+
+        val entries = paramBuffer.getEntries()
+        val latest = entries.lastOrNull() ?: return
+        val names = paramBuffer.paramNames
+        val values = latest.values
+
+        val density = resources.displayMetrics.density
+        val inWidth = (60 * density).toInt()
+        val paddingH = (8 * density).toInt()
+        val paddingV = (6 * density).toInt()
+
+        for (i in 0 until minOf(names.size, values.size)) {
+            val color = android.graphics.Color.parseColor(PARAM_COLORS[i % PARAM_COLORS.size])
+
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+                setPadding(0, paddingV, 0, paddingV)
+            }
+
+            // In{序号}
+            val labelView = TextView(this).apply {
+                text = "I$i"
+                textSize = 18f
+                setTextColor(color)
+                layoutParams = LinearLayout.LayoutParams(inWidth, LinearLayout.LayoutParams.WRAP_CONTENT)
+                gravity = android.view.Gravity.START
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+            }
+            row.addView(labelView)
+
+            // 数值（保留6位小数）
+            val valueView = TextView(this).apply {
+                val raw = values[i]
+                val formatted = try {
+                    val d = raw.toDouble()
+                    String.format(java.util.Locale.US, "%.6f", d)
+                } catch (_: NumberFormatException) {
+                    raw
+                }
+                text = formatted
+                textSize = 18f
+                setTextColor(color)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginStart = paddingH
+                }
+                gravity = android.view.Gravity.END
+            }
+            row.addView(valueView)
+
+            listView.addView(row)
+        }
     }
 
     private fun initTransceivers() {
@@ -208,12 +488,20 @@ class MainActivity : AppCompatActivity() {
             4 -> demoTransceiver
             else -> serialTransceiver
         }
-        // 为所有数据收发器设置统一的接收回调
-        tcpClientTransceiver.setOnDataReceivedListener { data -> appendOutput(data, false) }
-        tcpServerTransceiver.setOnDataReceivedListener { data -> appendOutput(data, false) }
-        serialTransceiver.setOnDataReceivedListener { data -> appendOutput(data, false) }
-        udpTransceiver.setOnDataReceivedListener { data -> appendOutput(data, false) }
-        demoTransceiver.setOnDataReceivedListener { data -> appendOutput(data, false) }
+        // 设置统一的协议引擎数据处理回调
+        // 根据当前数据引擎选择，将原始字节数据交由对应的引擎处理
+        setupDataEngineForTransceiver(tcpClientTransceiver, "TCP客户端")
+        setupDataEngineForTransceiver(tcpServerTransceiver, "TCP服务端")
+        setupDataEngineForTransceiver(serialTransceiver, "串口")
+        setupDataEngineForTransceiver(udpTransceiver, "UDP")
+        setupDataEngineForTransceiver(demoTransceiver, "Demo")
+
+        // 同时保留字符串接收回调（用于直接显示等场景）
+        tcpClientTransceiver.setOnDataReceivedListener { _ -> }
+        tcpServerTransceiver.setOnDataReceivedListener { _ -> }
+        serialTransceiver.setOnDataReceivedListener { _ -> }
+        udpTransceiver.setOnDataReceivedListener { _ -> }
+        demoTransceiver.setOnDataReceivedListener { _ -> }
 
         // 设置 TCP 客户端连接状态回调，超时/失败时自动恢复按钮状态
         tcpClientTransceiver.setOnStateChangedListener { connected, message ->
@@ -223,13 +511,19 @@ class MainActivity : AppCompatActivity() {
                 isConnected = true
                 btn.setImageResource(R.drawable.ic_connect_on)
                 btn.alpha = 1f
+                // 连接建立 -> 锁定数据引擎 Spinner
+                setDataEngineSpinnerEnabled(false)
+                onConnectionStateChanged(true)
             } else {
                 if (isConnected || isTcpConnecting) {
                     isTcpConnecting = false
                     isConnected = false
                     btn.setImageResource(R.drawable.ic_connect_off)
                     btn.alpha = 1f
-                    showToast(message)
+                    showToastShort(message)
+                    // 连接断开 -> 解锁数据引擎 Spinner
+                    setDataEngineSpinnerEnabled(true)
+                    onConnectionStateChanged(false)
                 }
             }
         }
@@ -238,7 +532,10 @@ class MainActivity : AppCompatActivity() {
             if (!connected && isConnected) {
                 isConnected = false
                 findViewById<ImageButton>(R.id.menuBarConnect).setImageResource(R.drawable.ic_connect_off)
-                showToast(message)
+                showToastShort(message)
+                // 服务端异常停止 -> 解锁数据引擎 Spinner
+                setDataEngineSpinnerEnabled(true)
+                onConnectionStateChanged(false)
             }
         }
         // 设置 TCP 服务端连接数变化回调，动态更新协议页面的连接数量显示
@@ -257,15 +554,153 @@ class MainActivity : AppCompatActivity() {
                 isConnected = true
                 btn.setImageResource(R.drawable.ic_connect_on)
                 btn.alpha = 1f
+                // 连接建立 -> 锁定数据引擎 Spinner
+                setDataEngineSpinnerEnabled(false)
+                onConnectionStateChanged(true)
             } else {
                 if (isConnected) {
                     isConnected = false
                     btn.setImageResource(R.drawable.ic_connect_off)
                     btn.alpha = 1f
-                    showToast(message)
+                    showToastShort(message)
+                    // 连接断开 -> 解锁数据引擎 Spinner
+                    setDataEngineSpinnerEnabled(true)
+                    onConnectionStateChanged(false)
                 }
             }
         }
+
+        // 根据保存的配置初始化数据引擎
+        selectDataEngine(panelConfig.dataEngineSelection)
+    }
+
+    // ====================== 协议引擎处理 ======================
+
+    /**
+     * 根据当前数据引擎选择，为指定的收发器设置原始数据回调
+     */
+    private fun setupDataEngineForTransceiver(transceiver: DataTransceiver, connectionName: String) {
+        transceiver.setOnRawDataReceivedListener { data ->
+            // ★ 引擎始终处理数据（ParamBuffer/ImageBuffer 不受 Rx 开关影响），
+            //    Rx 关闭时仅跳过 appendOutput 进入输出显示区。
+            val rxEnabled = outputRxHighlight
+
+            val outputs = if (rxEnabled) {
+                currentDataEngine.feed(connectionName, data)
+            } else {
+                // Rx 关闭时仍需要 feed 引擎以便 ParamBuffer 能锁定/接收数据帧
+                currentDataEngine.feed(connectionName, data)
+            }
+            val engineName = currentDataEngine.getEngineName()
+
+            for (output in outputs) {
+                // ── 判断是否为合规采样数据帧 ──
+                // RawData 引擎的 TEXT 不计入；仅 FireWater/JustFloat 的 TEXT 类型
+                // 且被 paramBuffer.feed() 接受后才算合规采样帧。
+                val isSamplingFrame = if (isConnected && output.type == OutputType.TEXT
+                    && engineName != "RawData") {
+                    val decoded = output.text.hexToString(outputUseGbk)
+                    val accepted = paramBuffer.feed(engineName, decoded)
+                    if (accepted) {
+                        android.os.Handler(android.os.Looper.getMainLooper())
+                            .post { refreshParamViews() }
+                    }
+                    accepted
+                } else {
+                    false
+                }
+
+                // ★ Rx 关闭时不进入输出显示区，但 ParamBuffer/ImageBuffer 已处理完毕
+                if (!rxEnabled) continue
+
+                // ★ 采样帧标记传入 appendOutput，由 doFlushOutput 根据 rxShowSampleData 控制显示
+                appendOutput(output.text, false, output.escapeControlChars, output.type, isSamplingFrame)
+            }
+            // 参数缓存锁定状态可能在 feed 后发生变化，更新标题
+            if (paramBuffer.isLocked) {
+                android.os.Handler(android.os.Looper.getMainLooper())
+                    .post { updateParamHeaderTitle() }
+            }
+        }
+    }
+
+    /**
+     * 切换数据引擎（由协议页面的数据引擎 Spinner 触发）
+     */
+    private fun selectDataEngine(engineIndex: Int) {
+        // 重置旧引擎状态
+        currentDataEngine.reset()
+        // 切换引擎时重置参数缓存区（旧引擎的锁定计数不再适用）
+        paramBuffer.reset()
+        imageBuffer.reset()
+        updateParamHeaderTitle()
+        refreshParamViews()
+
+        currentDataEngine = when (engineIndex) {
+            0 -> {
+                AppLogger.i("MainActivity", "数据引擎切换为: FireWater")
+                // 离开 JustFloat 时恢复 Hex/Abc 按钮（可能尚未初始化）
+                if (justFloatForceHex && ::btnAbcHex.isInitialized) {
+                    justFloatForceHex = false
+                    btnAbcHex.isEnabled = true
+                    btnAbcHex.alpha = 1f
+                }
+                justFloatForceHex = false
+                fireWaterEngine
+            }
+            1 -> {
+                AppLogger.i("MainActivity", "数据引擎切换为: JustFloat — 强制 Hex 模式")
+                // ★ JustFloat 强制使用 Hex 模式并禁止切换
+                justFloatForceHex = true
+                outputShowHex = true
+                // btnAbcHex 可能尚未初始化（初次启动时顺序在 setupOutputView 之前）
+                if (::btnAbcHex.isInitialized) {
+                    (btnAbcHex as? android.widget.TextView)?.text = "Hex"
+                    btnAbcHex.isEnabled = false
+                    btnAbcHex.alpha = 0.4f
+                }
+                justFloatEngine
+            }
+            2 -> {
+                AppLogger.i("MainActivity", "数据引擎切换为: RawData")
+                if (justFloatForceHex && ::btnAbcHex.isInitialized) {
+                    justFloatForceHex = false
+                    btnAbcHex.isEnabled = true
+                    btnAbcHex.alpha = 1f
+                }
+                justFloatForceHex = false
+                rawDataEngine
+            }
+            else -> {
+                AppLogger.i("MainActivity", "数据引擎切换为: FireWater（默认）")
+                fireWaterEngine
+            }
+        }
+
+        // 为所有收发器重新设置引擎回调
+        setupDataEngineForTransceiver(tcpClientTransceiver, "TCP客户端")
+        setupDataEngineForTransceiver(tcpServerTransceiver, "TCP服务端")
+        setupDataEngineForTransceiver(serialTransceiver, "串口")
+        setupDataEngineForTransceiver(udpTransceiver, "UDP")
+        setupDataEngineForTransceiver(demoTransceiver, "Demo")
+
+        panelConfig.dataEngineSelection = engineIndex
+        ConfigManager.saveConfig(panelConfig)
+
+        AppLogger.i("MainActivity", "数据引擎已切换至: ${currentDataEngine.getEngineName()}")
+        // 同步当前过滤状态到新引擎
+        updateImagePacketFilter()
+    }
+
+    /**
+     * 根据当前 Rx 开关同步更新当前引擎的图像过滤状态。
+     * ★ 图像数据包菜单仅控制显示输出，引擎始终处理图像数据，
+     *    确保 imageBuffer 正确更新。
+     *    图像菜单关闭时由 appendOutput 层阻止数据进入显示缓冲。
+     */
+    private fun updateImagePacketFilter() {
+        val filtered = !outputRxHighlight
+        currentDataEngine.setImagePacketFiltered(filtered)
     }
 
     private fun enableDoubleBackExit() {
@@ -557,6 +992,7 @@ class MainActivity : AppCompatActivity() {
             setupBaudRateSpinner()
             setupSerialSpinners()
             setupProtocolDocButton()
+            setupLocalIpDisplay()
         }
 
         highlightMenuBarButton(R.id.menuBarProtocol)
@@ -605,8 +1041,23 @@ class MainActivity : AppCompatActivity() {
         protocolView?.findViewById<View>(R.id.protocolHeader)?.setBackgroundColor(primaryColor)
     }
 
+    /**
+     * 启用或禁用数据引擎 Spinner。
+     * 连接建立时禁用（防止切换协议引擎），断开后恢复。
+     */
+    private fun setDataEngineSpinnerEnabled(enabled: Boolean) {
+        dataEngineSpinner?.let { spinner ->
+            spinner.isEnabled = enabled
+            // 修改透明度直观反映禁用状态
+            spinner.alpha = if (enabled) 1f else 0.4f
+            // 禁用时 Spinner 不响应点击
+            spinner.isClickable = enabled
+        }
+    }
+
     private fun setupDataEngineSpinner() {
         val spinner = protocolView?.findViewById<Spinner>(R.id.dataEngineSpinner) ?: return
+        dataEngineSpinner = spinner // 缓存引用供 setDataEngineSpinnerEnabled 使用
         val options = listOf(
             getString(R.string.protocol_option_firewater),
             getString(R.string.protocol_option_justfloat),
@@ -625,12 +1076,16 @@ class MainActivity : AppCompatActivity() {
         spinner.setSelection(panelConfig.dataEngineSelection.coerceIn(0, options.size - 1))
         spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                // 连接已建立时忽略 Spinner 的选中事件（视觉上已禁用，但防止程序触发）
+                if (isConnected) return
                 AppLogger.i("MainActivity", "数据引擎选择: " + options[position])
-                panelConfig.dataEngineSelection = position
-                ConfigManager.saveConfig(panelConfig)
+                selectDataEngine(position)
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
+
+        // 根据当前连接状态同步 Spinner 可用性
+        setDataEngineSpinnerEnabled(!isConnected)
     }
 
     private fun restoreTcpClientFields() {
@@ -646,6 +1101,8 @@ class MainActivity : AppCompatActivity() {
         connCountText?.text = tcpServerTransceiver.getManager().getConnectionCount().toString()
         // 刷新当前连接 Spinner，确保页面打开时与 Manager 状态一致
         updateTcpServerConnSpinner(tcpServerTransceiver.getManager().getClientAddresses())
+        // 刷新本机IP信息
+        updateLocalIpDisplay()
     }
 
     private fun restoreUdpFields() {
@@ -805,6 +1262,64 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ────────────── 本机IP地址信息显示 ──────────────
+
+    /**
+     * 获取本机所有非回环 IPv4 地址（WiFi、移动数据、热点等网络接口）
+     */
+    private fun getLocalIpInfo(): String {
+        val sb = StringBuilder()
+        try {
+            val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val networkInterface = interfaces.nextElement()
+                // 跳过未启用的、回环的和虚拟接口
+                if (!networkInterface.isUp || networkInterface.isLoopback || networkInterface.isVirtual) continue
+
+                val interfaceName = networkInterface.name
+                val addresses = networkInterface.inetAddresses
+                var hasIpv4 = false
+                val ips = StringBuilder()
+                while (addresses.hasMoreElements()) {
+                    val addr = addresses.nextElement()
+                    if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
+                        if (ips.isNotEmpty()) ips.append(", ")
+                        ips.append(addr.hostAddress)
+                        hasIpv4 = true
+                    }
+                }
+                if (hasIpv4) {
+                    if (sb.isNotEmpty()) sb.append("\n")
+                    sb.append(interfaceName).append(": ").append(ips)
+                }
+            }
+        } catch (e: Exception) {
+            return "获取IP失败: ${e.message}"
+        }
+        return sb.toString().ifEmpty { "无可用网络连接" }
+    }
+
+    /**
+     * 更新协议页面的本机IP显示
+     */
+    private fun updateLocalIpDisplay() {
+        val ipText = protocolView?.findViewById<TextView>(R.id.localIpInfo) ?: return
+        ipText.text = getLocalIpInfo()
+    }
+
+    /**
+     * 设置IP刷新按钮监听
+     */
+    private fun setupLocalIpDisplay() {
+        val refreshBtn = protocolView?.findViewById<TextView>(R.id.refreshIpBtn) ?: return
+        refreshBtn.setOnClickListener {
+            updateLocalIpDisplay()
+            Toast.makeText(this, "IP信息已刷新", Toast.LENGTH_SHORT).show()
+        }
+        // 首次进入页面时自动显示IP信息
+        updateLocalIpDisplay()
+    }
+
     // ====================== 设置页面 ======================
 
     private fun setupSettingsButton() {
@@ -842,6 +1357,7 @@ class MainActivity : AppCompatActivity() {
             settingsView = layoutInflater.inflate(R.layout.page_settings, null)
             setupSettingsSpinner()
             setupTcpTimeoutField()
+            setupSettingsExportButton()
             setupSettingsResetButton()
         }
 
@@ -967,6 +1483,80 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+    }
+
+    private fun setupSettingsExportButton() {
+        val row = settingsView?.findViewById<View>(R.id.settingsExportRow) ?: return
+
+        row.setOnClickListener {
+            val entries: List<OutputEntry>
+            synchronized(outputDataEntries) {
+                entries = outputDataEntries.toList()
+            }
+
+            if (entries.isEmpty()) {
+                showToast("没有可导出的输出数据")
+                return@setOnClickListener
+            }
+
+            Thread {
+                try {
+                    val ts = java.text.SimpleDateFormat("yy.MM.dd-HH-mm-ss", java.util.Locale.getDefault())
+                        .format(java.util.Date())
+                    val filename = "ECHO-$ts.log"
+
+                    val content = buildString {
+                        val timeFmt = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.getDefault())
+                        for (entry in entries) {
+                            if (!entry.visible) continue
+                            // 时间戳
+                            if (entry.timestampMs != null) {
+                                append("[").append(timeFmt.format(java.util.Date(entry.timestampMs))).append("] ")
+                            }
+                            // Rx/Tx 标记
+                            append(if (entry.isTx) "[TX] " else "[RX] ")
+                            // 类型标记
+                            when (entry.type) {
+                                com.fenfutao.echo.dataengine.OutputType.IMAGE_PACKET -> append("[IMAGE] ")
+                                else -> {}
+                            }
+                            // 内容：hex 解码为可读文本
+                            append(entry.text.hexToString(outputUseGbk))
+                            append("\n")
+                        }
+                    }
+
+                    // Android 10+ 使用 MediaStore 写入 Download 目录
+                    if (android.os.Build.VERSION.SDK_INT >= 29) {
+                        val contentValues = android.content.ContentValues().apply {
+                            put(android.provider.MediaStore.Downloads.DISPLAY_NAME, filename)
+                            put(android.provider.MediaStore.Downloads.MIME_TYPE, "text/plain")
+                            put(android.provider.MediaStore.Downloads.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                        }
+                        val uri = contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                        uri?.let {
+                            contentResolver.openOutputStream(it)?.use { os ->
+                                os.write(content.toByteArray(Charsets.UTF_8))
+                            }
+                        } ?: throw java.io.IOException("无法创建文件")
+                    } else {
+                        val dir = android.os.Environment.getExternalStoragePublicDirectory(
+                            android.os.Environment.DIRECTORY_DOWNLOADS)
+                        if (!dir.exists()) dir.mkdirs()
+                        val file = java.io.File(dir, filename)
+                        file.writeText(content, Charsets.UTF_8)
+                    }
+
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        showToastShort("已导出到 Download/$filename")
+                    }
+                } catch (e: Exception) {
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        showToastShort("导出失败: ${e.message}")
+                    }
+                }
+            }.start()
         }
     }
 
@@ -1235,12 +1825,20 @@ class MainActivity : AppCompatActivity() {
             }
             return tv
         }
-        btnAbcHex = makeBtn(if (outputShowHex) "Hex" else "Abc", true, true).apply { setOnClickListener { outputShowHex = !outputShowHex; (btnAbcHex as android.widget.TextView).text = if (outputShowHex) "Hex" else "Abc"; refreshOutputDisplay() } }
+        btnAbcHex = makeBtn(if (outputShowHex) "Hex" else "Abc", true, true).apply {
+            setOnClickListener {
+                // JustFloat 强制 Hex 模式时禁止切换
+                if (justFloatForceHex) return@setOnClickListener
+                outputShowHex = !outputShowHex
+                (btnAbcHex as android.widget.TextView).text = if (outputShowHex) "Hex" else "Abc"
+                refreshOutputDisplay()
+            }
+        }
         toolbar.addView(btnAbcHex); toolbar.addView(makeSep())
         val clockWrap = FrameLayout(this).apply { layoutParams = LinearLayout.LayoutParams(dpToPx(40), dpToPx(40)) }
         btnTimestamp = clockWrap
         val clockView = ClockIconView(this).apply { layoutParams = FrameLayout.LayoutParams(dpToPx(40), dpToPx(40)); isActive = outputShowTimestamp }
-        clockWrap.setOnClickListener { outputShowTimestamp = !outputShowTimestamp; clockView.isActive = outputShowTimestamp; refreshOutputDisplay() }
+        clockWrap.setOnClickListener { outputShowTimestamp = !outputShowTimestamp; clockView.isActive = outputShowTimestamp }
         clockWrap.setOnTouchListener { v, e ->
             when (e.action) {
                 MotionEvent.ACTION_DOWN -> { v.animate().scaleX(1.20f).scaleY(1.20f).setDuration(50).start(); true }
@@ -1251,9 +1849,52 @@ class MainActivity : AppCompatActivity() {
             }
         }
         clockWrap.addView(clockView); toolbar.addView(clockWrap)
-        btnRx = makeBtn("Rx", true).apply { (this as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputRxHighlight) "#4FC3F7" else "#9E9E9E")); setOnClickListener { outputRxHighlight = !outputRxHighlight; (btnRx as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputRxHighlight) "#4FC3F7" else "#9E9E9E")); refreshOutputDisplay() } }
+        btnRx = makeBtn("Rx", true).apply { (this as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputRxHighlight) "#4FC3F7" else "#9E9E9E")); setOnClickListener { outputRxHighlight = !outputRxHighlight; (btnRx as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputRxHighlight) "#4FC3F7" else "#9E9E9E")); updateImagePacketFilter(); btnRxDropdown.invalidate(); btnRx.invalidate() } }
         toolbar.addView(btnRx)
-        btnTx = makeBtn("Tx", true).apply { (this as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputTxHighlight) "#4FC3F7" else "#9E9E9E")); setOnClickListener { outputTxHighlight = !outputTxHighlight; (btnTx as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputTxHighlight) "#4FC3F7" else "#9E9E9E")); refreshOutputDisplay() } }
+
+        // ── Rx 下拉箭头（单个向下箭头 ∨）──
+        btnRxDropdown = object : android.view.View(this) {
+            private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.parseColor("#9E9E9E")
+                strokeWidth = dpToPx(2).toFloat()
+                style = android.graphics.Paint.Style.STROKE
+                strokeCap = android.graphics.Paint.Cap.ROUND
+            }
+            private val paintFiltered = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.parseColor("#FFA726")
+                strokeWidth = dpToPx(2).toFloat()
+                style = android.graphics.Paint.Style.STROKE
+                strokeCap = android.graphics.Paint.Cap.ROUND
+            }
+            override fun onDraw(canvas: android.graphics.Canvas) {
+                super.onDraw(canvas)
+                val w = width.toFloat()
+                val h = height.toFloat()
+                val cx = w / 2f
+                val cy = h / 2f
+                val size = minOf(w, h) * 0.30f
+                // ★ 高亮条件：Rx 开启 且 至少一个子选项开启
+                val p = if (outputRxHighlight && (rxShowSampleData || rxShowImagePacket)) paintFiltered else paint
+                // 单个向下箭头 ∨
+                canvas.drawLine(cx - size * 0.5f, cy - size * 0.2f, cx, cy + size * 0.4f, p)
+                canvas.drawLine(cx, cy + size * 0.4f, cx + size * 0.5f, cy - size * 0.2f, p)
+            }
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(dpToPx(20), dpToPx(40))
+            isClickable = true
+            setOnClickListener { showRxFilterPopup() }
+            setOnTouchListener { v, e ->
+                when (e.action) {
+                    MotionEvent.ACTION_DOWN -> { v.animate().scaleX(1.20f).scaleY(1.20f).setDuration(50).start(); true }
+                    MotionEvent.ACTION_MOVE -> { val ib = e.x in 0f..v.width.toFloat() && e.y in 0f..v.height.toFloat(); if (!ib && v.scaleX > 1.0f) v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(50).start(); true }
+                    MotionEvent.ACTION_UP -> { v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(50).start(); v.performClick(); true }
+                    MotionEvent.ACTION_CANCEL -> { v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(50).start(); true }
+                    else -> true
+                }
+            }
+        }
+        toolbar.addView(btnRxDropdown)
+        btnTx = makeBtn("Tx", true).apply { (this as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputTxHighlight) "#4FC3F7" else "#9E9E9E")); setOnClickListener { outputTxHighlight = !outputTxHighlight; (btnTx as android.widget.TextView).setTextColor(android.graphics.Color.parseColor(if (outputTxHighlight) "#4FC3F7" else "#9E9E9E")); btnTx.invalidate() } }
         toolbar.addView(btnTx); toolbar.addView(makeSep())
         btnFontInc = makeBtn("A+", true, true).apply { setOnClickListener { outputFontSize = (outputFontSize + 1f).coerceAtMost(24f); outputText.textSize = outputFontSize } }
         toolbar.addView(btnFontInc)
@@ -1262,7 +1903,7 @@ class MainActivity : AppCompatActivity() {
         btnEncoding = makeBtn(if (outputUseGbk) "GBK" else "UTF-8", false, true).apply { setOnClickListener { outputUseGbk = !outputUseGbk; (btnEncoding as android.widget.TextView).text = if (outputUseGbk) "GBK" else "UTF-8" } }
         toolbar.addView(btnEncoding)
         toolbar.addView(makeSep())
-        btnClear = makeBtn("E", true, true).apply { setOnClickListener { outputDataEntries.clear(); outputText.text = ""; lastDisplayedEntryCount = 0; autoScrollEnabled = true; scrollToBottomBtn.visibility = View.GONE; outputScrollView.invalidate() } }
+        btnClear = makeBtn("E", true, true).apply { setOnClickListener { synchronized(outputDataEntries) { outputDataEntries.clear() }; displayBuffer.clear(); outputText.setText(displayBuffer, android.widget.TextView.BufferType.SPANNABLE); lastDisplayedEntryCount = 0; autoScrollEnabled = true; scrollToBottomBtn.visibility = View.GONE; outputScrollView.invalidate() } }
         toolbar.addView(btnClear)
         root.addView(toolbar)
         // 用 FrameLayout 包裹 ScrollView 以便叠加跳底按钮
@@ -1281,14 +1922,29 @@ class MainActivity : AppCompatActivity() {
         outputText.setTextColor(android.graphics.Color.parseColor("#E0E0E0"))
         outputText.setLineSpacing(2f, 1f)
         outputText.typeface = ResourcesCompat.getFont(this, R.font.maple_mono)
+        outputText.setText(displayBuffer, android.widget.TextView.BufferType.SPANNABLE)
         scrollView.addView(outputText)
 
-        // 跳底按钮（仅用户手动滚动后显示）
-        scrollToBottomBtn = android.widget.TextView(this).apply {
-            text = "↓"
-            textSize = 18f
-            gravity = android.view.Gravity.CENTER
-            setTextColor(android.graphics.Color.parseColor("#E0E0E0"))
+        // 跳底按钮（仅用户手动滚动后显示，两根线组成的向下箭头）
+        scrollToBottomBtn = object : android.view.View(this) {
+            private val arrowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.parseColor("#E0E0E0")
+                strokeWidth = dpToPx(3).toFloat()
+                style = android.graphics.Paint.Style.STROKE
+                strokeCap = android.graphics.Paint.Cap.ROUND
+            }
+            override fun onDraw(canvas: android.graphics.Canvas) {
+                super.onDraw(canvas)
+                val w = width.toFloat()
+                val h = height.toFloat()
+                val cx = w / 2f
+                val cy = h / 2f
+                val size = minOf(w, h) * 0.35f
+                // 向下的 V 形箭头
+                canvas.drawLine(cx - size * 0.5f, cy - size * 0.2f, cx, cy + size * 0.4f, arrowPaint)
+                canvas.drawLine(cx, cy + size * 0.4f, cx + size * 0.5f, cy - size * 0.2f, arrowPaint)
+            }
+        }.apply {
             setBackgroundDrawable(android.graphics.drawable.GradientDrawable().apply {
                 shape = android.graphics.drawable.GradientDrawable.OVAL
                 setSize(dpToPx(40), dpToPx(40))
@@ -1308,9 +1964,12 @@ class MainActivity : AppCompatActivity() {
         scrollViewWrapper.addView(scrollToBottomBtn)
 
         // 监听用户手动滚动 → 停止自动滚动，显示跳底按钮
+        // ★ 连接时 scrollLocked=true，此回调不会被触发；断开后才生效
         scrollView.onUserScrolledListener = {
-            autoScrollEnabled = false
-            scrollToBottomBtn.visibility = View.VISIBLE
+            if (!isConnected) {
+                autoScrollEnabled = false
+                scrollToBottomBtn.visibility = View.VISIBLE
+            }
         }
 
         root.addView(scrollViewWrapper)
@@ -1514,9 +2173,11 @@ class MainActivity : AppCompatActivity() {
             val bytes: ByteArray = try {
                 hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
             } catch (_: NumberFormatException) { showToast("Hex格式错误"); return }
-            // 统一以字节的文本解码作为 display，由 appendOutput 根据 outputShowHex 决定最终格式
-            val displayStr = bytes.decodeToString()
-            appendOutput(displayStr, true)
+
+            // ★ 发送流程无需经过协议引擎，直接使用缓冲区 hex 显示并发送
+            //    直接将 hex 原文传递给显示函数（hex→UTF-8 由显示函数内部处理）
+            appendOutput(hex, true)
+
             // 根据行尾选项，在发送数据末尾追加行尾符
             val lineEndingBytes: ByteArray = when (panelConfig.sendLineEndingSelection) {
                 1 -> byteArrayOf(0x0A)       // \n
@@ -1541,24 +2202,44 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) { }
     }
 
-    private fun appendOutput(data: String, isTx: Boolean) {
-        // 跳过空内容行（如连续换行符产生的空行）
+    private fun appendOutput(data: String, isTx: Boolean, escapeControlChars: Boolean = false, outputType: OutputType = OutputType.TEXT, isSamplingData: Boolean = false) {
+        // 所有传入数据均为连续 hex 字符串，无需再做 \r\n 标准化
         if (data.isEmpty()) return
-        val cleaned = data.replace("\r\n", "\n").replace("\r", "\n")
-        // 清理后可能变成空字符串（如仅有 \r 的数据）
-        if (cleaned.isEmpty()) return
+        // ★ 断开连接后不再处理数据（安全冗余，transceiver 端已清除 listener）
+        if (!isConnected) return
         val ts = if (outputShowTimestamp) System.currentTimeMillis() else null
-        // visible 由追加时的开关决定：Rx 受 outputRxHighlight 控制，Tx 受 outputTxHighlight 控制
-        val visible = if (isTx) outputTxHighlight else outputRxHighlight
-        synchronized(outputDataEntries) {
-            outputDataEntries.add(OutputEntry(cleaned, ts, isTx, visible))
-            // 限制最大条目数，防止无限增长导致内存溢出
-            while (outputDataEntries.size > MAX_OUTPUT_ENTRIES) {
-                outputDataEntries.removeAt(0)
+
+        // ── 图像数据 ──
+        if (outputType == OutputType.IMAGE_PACKET) {
+            // ★ 保存当前 ImageBuffer 状态以判断是前导帧还是数据载荷
+            val isDataPayload = imageBuffer.isCollecting
+            // 馈送至图像缓存区（帧头 + 数据成对存储）
+            imageBuffer.feed(data)
+
+            // ★ 原始数据载荷仅进入 ImageBuffer，不写入显示缓冲
+            if (isDataPayload) return
+
+            // ★ 图像数据包关闭 或 全局 Rx 关闭 → 不写入显示缓冲
+            if (!rxShowImagePacket || !outputRxHighlight) {
+                return
             }
         }
-        // 不再立即刷新 UI，改为调度批量刷新
-        scheduleOutputFlush()
+
+        // ── 输出显示缓冲（统一单缓冲区）──
+        synchronized(outputDataEntries) {
+            outputDataEntries.add(OutputEntry(data, ts, isTx, true, escapeControlChars, outputType, isSamplingData))
+            // 超过上限时移除最旧条目，同步调整已显示计数
+            while (outputDataEntries.size > MAX_OUTPUT_ENTRIES) {
+                outputDataEntries.removeAt(0)
+                if (lastDisplayedEntryCount > 0) lastDisplayedEntryCount--
+            }
+        }
+
+        // ★ Rx/Tx 均关闭时不调度刷新，避免主线程无谓拥塞
+        val shouldShow = (isTx && outputTxHighlight) || (!isTx && outputRxHighlight)
+        if (shouldShow) {
+            scheduleOutputFlush()
+        }
     }
 
     /**
@@ -1572,158 +2253,261 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 执行批量刷新 — 增量追加新条目到 outputText，不再全量重建
-     * 仅在 main thread 上调用（通过 Handler）
+     * 将显示缓冲区裁剪到字符上限以内。
+     * 从开头删除最旧内容，在换行边界处切割以避免截断行。
      */
-    private fun doFlushOutput() {
-        outputFlushPending = false
+    private fun trimDisplayBuffer() {
+        if (displayBuffer.length <= MAX_DISPLAY_CHARS) return
+        // 多裁剪 10% 以避免频繁触发裁剪
+        val target = displayBuffer.length - MAX_DISPLAY_CHARS + MAX_DISPLAY_CHARS / 10
+        var cut = target.coerceIn(0, displayBuffer.length)
+        while (cut < displayBuffer.length && displayBuffer[cut] != '\n') cut++
+        if (cut < displayBuffer.length) cut++ // 跳过换行符
+        displayBuffer.delete(0, cut)
+    }
+
+    /**
+     * 构建单条条目的显示文本（不包含前置换行）
+     * @return 构建好的 SpannableStringBuilder，若条目被过滤则返回 null
+     */
+    private fun buildEntryDisplay(entry: OutputEntry, rxColor: Int, txColor: Int, timestampColor: Int): SpannableStringBuilder? {
+        if (!entry.visible) return null
+        if ((entry.isTx && !outputTxHighlight) || (!entry.isTx && !outputRxHighlight)) return null
+        if (!entry.isTx && entry.type == OutputType.IMAGE_PACKET && !rxShowImagePacket) return null
+        if (!entry.isTx && entry.isSamplingData && !rxShowSampleData) return null
+
+        val contentStr: String
+        if (outputShowHex) {
+            contentStr = entry.text.chunked(2).joinToString(" ")
+        } else {
+            val decoded = entry.text.hexToString(outputUseGbk).escapeDisplay()
+            contentStr = decoded
+        }
+        if (contentStr.isEmpty()) return null
+
+        val sb = SpannableStringBuilder()
+        val lineStart = sb.length
+        if (entry.timestampMs != null) {
+            val ts = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date(entry.timestampMs))
+            sb.append("[$ts] ")
+            sb.setSpan(ForegroundColorSpan(timestampColor), lineStart, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        val contentStart = sb.length
+        sb.append(contentStr)
+        sb.setSpan(
+            ForegroundColorSpan(if (entry.isTx) txColor else rxColor),
+            contentStart, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        return sb
+    }
+
+    /**
+     * 增量刷新输出 — 处理新条目递增追加到单显示缓冲区。
+     *
+     * ★ 核心优化：使用 outputText.append() 做增量布局，而非每次 setText()。
+     *    append() 仅触发新增内容的 measure/layout，不重建整棵 View 树。
+     *    仅在缓冲区超限裁剪时才做一次 setText()（罕见操作）。
+     *
+     * 连接时 batchSize=500 加速出流；断开时 batchSize=200 降低历史回看负载。
+     */
+    private fun rebuildOutputText() {
         val rxColor = android.graphics.Color.parseColor("#4FC3F7")
         val txColor = android.graphics.Color.parseColor("#FFB74D")
         val timestampColor = android.graphics.Color.parseColor("#9E9E9E")
 
-        val newSpannable = SpannableStringBuilder()
-        var hasNew = false
-        var needsClear = false
-        // 记录现有文本是否非空，用于判断是否需要前置换行
-        val existingTextNonEmpty = outputText.text.isNotEmpty()
-
+        // ★ 连接时更快出流，断开时保守以降低 CPU 占用
+        val batchSize = if (isConnected) 500 else 200
+        val chunk = SpannableStringBuilder()
+        val processedCount: Int
+        val hasMore: Boolean
         synchronized(outputDataEntries) {
-            // 若因条目被裁剪导致索引越界，触发全量重建
-            if (lastDisplayedEntryCount > outputDataEntries.size) {
-                lastDisplayedEntryCount = 0
-                needsClear = true
+            val pendingCount = outputDataEntries.size - lastDisplayedEntryCount
+            if (pendingCount <= 0) return
+
+            val batchEnd = minOf(lastDisplayedEntryCount + batchSize, outputDataEntries.size)
+
+            for (i in lastDisplayedEntryCount until batchEnd) {
+                val entry = outputDataEntries[i]
+                val display = buildEntryDisplay(entry, rxColor, txColor, timestampColor) ?: continue
+                if (chunk.isNotEmpty()) chunk.append('\n')
+                chunk.append(display)
             }
-
-            if (lastDisplayedEntryCount >= outputDataEntries.size) {
-                if (!needsClear) return
-            } else {
-                // 仅处理自上次刷新以来的新条目
-                for (i in lastDisplayedEntryCount until outputDataEntries.size) {
-                    val entry = outputDataEntries[i]
-                    if (!entry.visible) continue
-
-                    // 处理条目间的换行：
-                    // - 第一个可见条目：如果现有文本已有内容，需要前置 \n
-                    // - 后续可见条目：始终前置 \n
-                    if (!hasNew) {
-                        if (existingTextNonEmpty) {
-                            newSpannable.append("\n")
-                        }
-                    } else {
-                        newSpannable.append("\n")
-                    }
-                    hasNew = true
-
-                    val lineStart = newSpannable.length
-                    // 时间戳
-                    if (entry.timestampMs != null) {
-                        val ts = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date(entry.timestampMs))
-                        newSpannable.append("[$ts] ")
-                        newSpannable.setSpan(ForegroundColorSpan(timestampColor),
-                            lineStart, newSpannable.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    }
-                    // 数据内容
-                    val contentStr: String
-                    if (outputShowHex) {
-                        contentStr = entry.text.toByteArray(kotlin.text.Charsets.UTF_8).joinToString(" ") { String.format("%02X", it) }
-                    } else {
-                        contentStr = entry.text
-                    }
-                    val contentStart = newSpannable.length
-                    newSpannable.append(contentStr)
-                    newSpannable.setSpan(ForegroundColorSpan(if (entry.isTx) txColor else rxColor),
-                        contentStart, newSpannable.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                }
-                lastDisplayedEntryCount = outputDataEntries.size
-            }
+            processedCount = batchEnd - lastDisplayedEntryCount
+            lastDisplayedEntryCount = batchEnd
+            hasMore = lastDisplayedEntryCount < outputDataEntries.size
         }
 
-        // UI 操作在同步块外执行
-        if (needsClear) {
-            outputText.text = ""
-            autoScrollEnabled = true
-            scrollToBottomBtn.visibility = View.GONE
+        if (chunk.isEmpty()) return
+
+        // ★ 增量构建新条目的显示文本，追加到显示缓冲区
+        if (displayBuffer.isNotEmpty()) {
+            displayBuffer.append('\n')
         }
-        if (hasNew) {
-            outputText.append(newSpannable)
-            // 自动滚动到底部（仅在用户未手动翻看历史时）
-            if (autoScrollEnabled) {
+        displayBuffer.append(chunk)
+        // ★ 裁剪旧行
+        val needTrim = displayBuffer.length > MAX_DISPLAY_CHARS
+        if (needTrim) {
+            trimDisplayBuffer()
+        }
+        // ★ 统一 setText() 同步到 TextView（单源可靠，避免 append() 双对象不同步崩溃）
+        outputText.setText(displayBuffer, android.widget.TextView.BufferType.SPANNABLE)
+
+        outputScrollView.invalidate()
+
+        // ★ 连接时始终自动滚动到底；断开时尊重 autoScrollEnabled
+        if (isConnected || autoScrollEnabled) {
+            outputScrollView.post {
                 outputScrollView.fullScroll(android.view.View.FOCUS_DOWN)
             }
-            outputScrollView.invalidate()
         }
+
+        // ★ 若还有剩余条目，立即继续处理
+        if (hasMore) {
+            outputHandler.post(outputFlushRunnable)
+        }
+    }
+
+    /** 执行批量刷新 */
+    private fun doFlushOutput() {
+        outputFlushPending = false
+        rebuildOutputText()
     }
 
     /**
-     * 全量重建输出显示 — 当设置（Hex/Abc、时间戳、Rx/Tx过滤）变化时调用
-     * 将 lastDisplayedEntryCount 置 0，由下次 doFlushOutput 触发全量重建
+     * 设置变化（Hex/Abc、时间戳、Rx/Tx 过滤）时触发重建。
+     * ★ 不清空全部再重建（阻塞主线程），而是清空缓冲区后让增量刷新
+     *    自然分批次重新构建（惰性加载），仅当前可见内容优先渲染。
      */
     private fun refreshOutputDisplay() {
-        synchronized(outputDataEntries) {
-            lastDisplayedEntryCount = 0
-        }
-        // 取消待处理的增量刷新，立即调度一次全量刷新
         outputHandler.removeCallbacks(outputFlushRunnable)
         outputFlushPending = false
-        outputHandler.post {
-            val rxColor = android.graphics.Color.parseColor("#4FC3F7")
-            val txColor = android.graphics.Color.parseColor("#FFB74D")
-            val timestampColor = android.graphics.Color.parseColor("#9E9E9E")
-
-            val spannable = SpannableStringBuilder()
-            val entries: List<OutputEntry>
-            synchronized(outputDataEntries) {
-                entries = outputDataEntries.toList()
-                lastDisplayedEntryCount = outputDataEntries.size
-            }
-
-            var firstVisible = true
-            for (entry in entries) {
-                if (!entry.visible) continue
-                // 跳过空内容条目
-                if (entry.text.isEmpty()) continue
-                if (!firstVisible) spannable.append("\n")
-                firstVisible = false
-                val lineStart = spannable.length
-
-                // 时间戳
-                if (entry.timestampMs != null) {
-                    val ts = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date(entry.timestampMs))
-                    spannable.append("[$ts] ")
-                    spannable.setSpan(ForegroundColorSpan(timestampColor),
-                        lineStart, spannable.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                }
-
-                // 数据内容
-                val contentStr: String
-                if (outputShowHex) {
-                    contentStr = entry.text.toByteArray(kotlin.text.Charsets.UTF_8).joinToString(" ") { String.format("%02X", it) }
-                } else {
-                    contentStr = entry.text
-                }
-                val contentStart = spannable.length
-                spannable.append(contentStr)
-                spannable.setSpan(ForegroundColorSpan(if (entry.isTx) txColor else rxColor),
-                    contentStart, spannable.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            }
-            outputText.text = spannable
-            if (autoScrollEnabled) {
-                outputScrollView.fullScroll(android.view.View.FOCUS_DOWN)
-            }
-            outputScrollView.invalidate()
-        }
+        displayBuffer.clear()
+        lastDisplayedEntryCount = 0
+        outputText.setText(displayBuffer, android.widget.TextView.BufferType.SPANNABLE)
+        scheduleOutputFlush()
     }
 
-    /** 跳转至最新行并恢复自动滚动 */
+    // ====================== Rx 过滤菜单 ======================
+
+    /**
+     * 显示 Rx 过滤下拉菜单（采样数据包 / 图像数据包）
+     * 使用 PopupWindow 自绘，按下文本高亮为橙色 + 放大动画
+     */
+    private fun showRxFilterPopup() {
+        val dp = resources.displayMetrics.density
+        val itemH = dpToPx(44)
+        val itemW = dpToPx(160)
+
+        val defaultColor = android.graphics.Color.parseColor("#E0E0E0")
+        val highlightColor = android.graphics.Color.parseColor("#FFA726")
+        val bgNormal = android.graphics.Color.parseColor("#333333")
+        val bgHighlight = android.graphics.Color.parseColor("#19FFA726")
+        val sepColor = android.graphics.Color.parseColor("#555555")
+
+        fun makeMenuItem(text: String, isChecked: Boolean, onClick: () -> Unit): android.widget.TextView {
+            val tv = android.widget.TextView(this)
+            tv.text = text
+            tv.textSize = 16f
+            // 初始状态：开启时显示橙色高亮
+            tv.setTextColor(if (isChecked) highlightColor else defaultColor)
+            tv.setPadding(dpToPx(16), 0, dpToPx(16), 0)
+            tv.gravity = android.view.Gravity.CENTER_VERTICAL
+            tv.minimumHeight = itemH
+            tv.layoutParams = android.widget.LinearLayout.LayoutParams(itemW, itemH)
+            tv.isClickable = true
+            tv.setBackgroundColor(bgNormal)
+            tv.setOnTouchListener { v, e ->
+                when (e.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        tv.setTextColor(highlightColor)
+                        tv.setBackgroundColor(bgHighlight)
+                        v.animate().scaleX(1.15f).scaleY(1.15f).setDuration(50).start()
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val ib = e.x in 0f..v.width.toFloat() && e.y in 0f..v.height.toFloat()
+                        if (!ib && v.scaleX > 1.0f) {
+                            v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(50).withEndAction {
+                                tv.setBackgroundColor(bgNormal)
+                            }.start()
+                        } else if (ib && v.scaleX <= 1.0f) {
+                            tv.setBackgroundColor(bgHighlight)
+                            v.animate().scaleX(1.15f).scaleY(1.15f).setDuration(50).start()
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(50).start()
+                        v.performClick()
+                        true
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        tv.setTextColor(defaultColor)
+                        tv.setBackgroundColor(bgNormal)
+                        v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(50).start()
+                        true
+                    }
+                    else -> true
+                }
+            }
+            tv.setOnClickListener {
+                onClick()
+                // ★ 点击后立即切换文字颜色反映新状态（不依赖下次展开）
+                val checked = if (text == "采样数据包") rxShowSampleData else rxShowImagePacket
+                tv.setTextColor(if (checked) highlightColor else defaultColor)
+                tv.setBackgroundColor(bgNormal)
+            }
+            return tv
+        }
+
+        // 容器
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(bgNormal)
+        }
+
+        // 采样数据包
+        container.addView(makeMenuItem("采样数据包", rxShowSampleData) {
+            rxShowSampleData = !rxShowSampleData
+            btnRxDropdown.invalidate()
+        })
+        // 分隔线
+        container.addView(android.view.View(this).apply {
+            layoutParams = android.widget.LinearLayout.LayoutParams(itemW, 1)
+            setBackgroundColor(sepColor)
+        })
+        container.addView(makeMenuItem("图像数据包", rxShowImagePacket) {
+            rxShowImagePacket = !rxShowImagePacket
+            updateImagePacketFilter()
+            btnRxDropdown.invalidate()
+        })
+
+        container.measure(
+            android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED),
+            android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED)
+        )
+
+        val popup = PopupWindow(container, itemW, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, true)
+        popup.elevation = dpToPx(8).toFloat()
+        popup.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+        popup.showAsDropDown(btnRxDropdown, 0, -dpToPx(4)) // 紧贴按钮下方
+    }
+
+    /** 跳转至最新行并恢复自动滚动（仅在断开状态下可用） */
     private fun scrollToLatestAndResume() {
         autoScrollEnabled = true
         scrollToBottomBtn.visibility = View.GONE
-        outputScrollView.jumpToBottom()
+        outputScrollView.invalidate()
+        outputScrollView.post {
+            outputScrollView.fullScroll(android.view.View.FOCUS_DOWN)
+            outputScrollView.thumbVisible = false
+            outputScrollView.invalidate()
+        }
     }
 
     private fun getProtocolName(position: Int): String = when (position) { 0 -> "串口"; 1 -> "UDP"; 2 -> "TCP客户端"; 3 -> "TCP服务端"; 4 -> "Demo"; else -> "未知" }
 
-    private fun handleConnectToggle(btn: ImageButton) {
+        private fun handleConnectToggle(btn: ImageButton) {
         when (selectedProtocolPosition) {
             1 -> {
                 // ── UDP ──
@@ -1733,7 +2517,9 @@ class MainActivity : AppCompatActivity() {
                     btn.setImageResource(R.drawable.ic_connect_off)
                     btn.alpha = 1f
                     AppLogger.i("MainActivity", "UDP 已断开")
-                    showToast("UDP 已断开")
+                    showToastShort("UDP 已断开")
+                    setDataEngineSpinnerEnabled(true)
+                    onConnectionStateChanged(false)
                 } else {
                     val ip = protocolView?.findViewById<EditText>(R.id.udpRemoteIp)?.text?.toString()
                         ?: panelConfig.udpRemoteIp
@@ -1755,7 +2541,9 @@ class MainActivity : AppCompatActivity() {
                         isConnected = true
                         btn.setImageResource(R.drawable.ic_connect_on)
                         btn.alpha = 1f
-                        showToast("UDP 已启动，本地端口: $localPort")
+                        showToastShort("UDP 已启动，本地端口: $localPort")
+                        setDataEngineSpinnerEnabled(false)
+                        onConnectionStateChanged(true)
                     }
                 }
             }
@@ -1769,7 +2557,8 @@ class MainActivity : AppCompatActivity() {
                     btn.setImageResource(R.drawable.ic_connect_off)
                     btn.alpha = 1f
                     AppLogger.i("MainActivity", "TCP客户端断开")
-                    showToast(if (wasConnecting) "已取消连接" else "TCP客户端已断开")
+                    showToastShort(if (wasConnecting) "已取消连接" else "TCP客户端已断开")
+                    onConnectionStateChanged(false)
                 } else {
                     val ip = protocolView?.findViewById<EditText>(R.id.tcpClientServerIp)?.text?.toString()
                         ?: panelConfig.tcpClientServerIp
@@ -1791,7 +2580,7 @@ class MainActivity : AppCompatActivity() {
                         isTcpConnecting = true
                         btn.setImageResource(R.drawable.ic_connect_on)
                         btn.alpha = 0.5f
-                        showToast("正在连接 $ip:$port ...")
+                        showToastShort("正在连接 $ip:$port ...")
                     }
                 }
             }
@@ -1801,7 +2590,9 @@ class MainActivity : AppCompatActivity() {
                     tcpServerTransceiver.disconnect()
                     isConnected = false
                     btn.setImageResource(R.drawable.ic_connect_off)
-                    showToast("TCP服务端已停止")
+                    showToastShort("TCP服务端已停止")
+                    setDataEngineSpinnerEnabled(true)
+                    onConnectionStateChanged(false)
                 } else {
                     val portStr = protocolView?.findViewById<EditText>(R.id.tcpServerListenPort)?.text?.toString()
                         ?: panelConfig.tcpServerListenPort
@@ -1818,26 +2609,50 @@ class MainActivity : AppCompatActivity() {
                     if (tcpServerTransceiver.connect()) {
                         isConnected = true
                         btn.setImageResource(R.drawable.ic_connect_on)
-                        showToast("TCP服务端已启动，端口: $port")
+                        showToastShort("TCP服务端已启动，端口: $port")
+                        setDataEngineSpinnerEnabled(false)
+                        onConnectionStateChanged(true)
                     } else {
-                        showToast("启动失败，端口可能被占用")
+                        showToastShort("启动失败，端口可能被占用")
                     }
                 }
             }
             else -> {
-                // ── 串口 / UDP / Demo（暂未实现具体连接，使用 NullTransceiver） ──
+                // ── 串口 / Demo（暂未实现具体连接，使用 NullTransceiver） ──
                 if (currentTransceiver.isConnected()) {
                     currentTransceiver.disconnect()
                     isConnected = false
                     btn.setImageResource(R.drawable.ic_connect_off)
-                    showToast("${currentTransceiver.getProtocolName()} 已断开")
+                    showToastShort("${currentTransceiver.getProtocolName()} 已断开")
+                    setDataEngineSpinnerEnabled(true)
+                    onConnectionStateChanged(false)
                 } else {
                     if (currentTransceiver.connect()) {
                         isConnected = true
                         btn.setImageResource(R.drawable.ic_connect_on)
-                        showToast("${currentTransceiver.getProtocolName()} 已连接")
+                        showToastShort("${currentTransceiver.getProtocolName()} 已连接")
+                        setDataEngineSpinnerEnabled(false)
+                        onConnectionStateChanged(true)
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * 连接/断开状态切换时统一处理滚动行为。
+     * - connected=true：锁定滚动、强制回到底部、隐藏跳底按钮、启用自动滚动
+     * - connected=false：解锁滚动、允许用户回看历史、数据停止涌入后显示跳底按钮
+     */
+    private fun onConnectionStateChanged(connected: Boolean) {
+        outputScrollView.scrollLocked = connected
+        if (connected) {
+            autoScrollEnabled = true
+            scrollToBottomBtn.visibility = View.GONE
+            outputScrollView.post {
+                outputScrollView.fullScroll(android.view.View.FOCUS_DOWN)
+                outputScrollView.thumbVisible = false
+                outputScrollView.invalidate()
             }
         }
     }
@@ -1845,10 +2660,27 @@ class MainActivity : AppCompatActivity() {
     private fun disconnectCurrent() {
         if (!isConnected) return
         currentTransceiver.disconnect()
-        isConnected = false; findViewById<ImageButton>(R.id.menuBarConnect).setImageResource(R.drawable.ic_connect_off); showToast("已断开")
+        isConnected = false; findViewById<ImageButton>(R.id.menuBarConnect).setImageResource(R.drawable.ic_connect_off); showToastShort("已断开")
+        // 断开连接时重置当前协议引擎的内部状态
+        currentDataEngine.reset()
+        // 断开连接 -> 解锁数据引擎 Spinner
+        setDataEngineSpinnerEnabled(true)
+        // 断开连接 -> 重置参数缓存区（下次连接重新锁定）
+        paramBuffer.reset()
+        imageBuffer.reset()
+        updateParamHeaderTitle()
+        refreshParamViews()
+        onConnectionStateChanged(false)
     }
 
     private fun showToast(msg: String) { Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }
+
+    /** 显示短时 Toast（0.5 秒后自动消失），用于连接/断开等轻量提示 */
+    private fun showToastShort(msg: String) {
+        val toast = Toast.makeText(this, msg, Toast.LENGTH_SHORT)
+        toast.show()
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ toast.cancel() }, 500L)
+    }
 
     private fun restartApp() {
         val intent = Intent(this, MainActivity::class.java)

@@ -48,6 +48,10 @@ object DefaultConfig {
         outputFontSize = 11f,           // 字号 11
         outputUseGbk = false,           // UTF-8
 
+        // ── Rx 过滤 ──
+        rxShowSampleData = true,
+        rxShowImagePacket = true,
+
         // ── 发送区工具栏 ──
         sendHexMode = false,            // Abc
         sendLineEndingSelection = 1,    // \n
